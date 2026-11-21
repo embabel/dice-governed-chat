@@ -1,0 +1,68 @@
+server:
+  address: 127.0.0.1
+
+spring:
+  application:
+    name: dice-governed-chat
+  ai:
+    model:
+      chat: none
+      embedding: none
+
+logging:
+  level:
+    # Drivine's statement logger includes parameter values on errors.
+    org.drivine.logger.StatementLogger: "OFF"
+
+database:
+  datasources:
+    local:
+      type: SQLITE
+      database-name: ${governed.store.path:${GOVERNED_CHAT_DB:./data/governed-chat.sqlite}}
+
+embabel:
+  dice:
+    store:
+      datasource: local
+      decay:
+        enabled: false
+  agent:
+    platform:
+      decisions:
+        capture-content: false
+
+---
+spring:
+  config:
+    activate:
+      on-profile: "!live"
+  autoconfigure:
+    exclude:
+      - com.embabel.agent.autoconfigure.models.openai.AgentOpenAiAutoConfiguration
+
+embabel:
+  models:
+    default-llm: scripted
+    default-embedding-model: demo-embeddings
+    decision:
+      roles:
+        dice-revision: scripted
+
+---
+spring:
+  config:
+    activate:
+      on-profile: live
+
+database:
+  datasources:
+    local:
+      database-name: ${governed.store.path:${GOVERNED_CHAT_DB:./data/governed-chat-live.sqlite}}
+
+embabel:
+  models:
+    default-llm: ${GOVERNED_CHAT_MODEL:gpt-4.1-mini}
+    default-embedding-model: ${GOVERNED_CHAT_EMBEDDING_MODEL:text-embedding-3-small}
+    decision:
+      roles:
+        dice-revision: ${GOVERNED_CHAT_DECISION_MODEL:gpt-4.1-mini}

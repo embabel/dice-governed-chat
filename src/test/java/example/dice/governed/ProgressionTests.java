@@ -44,6 +44,8 @@ class ProgressionTests {
             assertThat(reply.body()).contains("TEXT_MESSAGE_CONTENT", "STATE_SNAPSHOT", "RUN_FINISHED");
             assertThat(reply.headers().firstValue("Content-Type")).hasValueSatisfying(
                     contentType -> assertThat(contentType).startsWith("text/event-stream"));
+            assertThat(app.say("acme", DESK, "dispute-1", DISPUTE).body()).contains("already processed");
+            app.say("acme", DESK, "dispute-1", "Different content with the same identity", 409);
 
             JsonNode disputed = app.json("GET", "acme/state", DESK, null, 200);
             assertThat(claims(disputed, true)).anyMatch(text -> text.contains("30 days"));
@@ -66,6 +68,7 @@ class ProgressionTests {
                     .noneMatch(text -> text.contains("30 days"));
             assertThat(app.json("GET", "acme/sources/dispute-1", REVIEWER, null, 200).path("text").asString())
                     .isEqualTo(DISPUTE);
+            app.json("POST", "acme/reviews/" + reviewId + "/approve", REVIEWER, null, 404);
 
             JsonNode prior = app.json("GET", "acme/history?asOf=" + beforeApproval, REVIEWER, null, 200);
             assertThat(claims(prior, true)).anyMatch(text -> text.contains("30 days"))
@@ -74,6 +77,13 @@ class ProgressionTests {
             assertThat(claims(beta, true)).anyMatch(text -> text.contains("30 days"))
                     .noneMatch(text -> text.contains("60 days"));
             app.json("GET", "acme/history?asOf=2000-01-01T00:00:00Z", REVIEWER, null, 422);
+
+            app.say("acme", DESK, "pref-1", "Email is our preferred follow-up channel.");
+            app.say("acme", DESK, "pref-2", "Phone is our preferred follow-up channel.");
+            JsonNode preference = app.json("GET", "acme/state", DESK, null, 200);
+            assertThat(claims(preference, false)).anyMatch(text -> text.contains("Email"))
+                    .noneMatch(text -> text.contains("Phone"));
+            assertThat(preference.path("reviews").get(0).path("text").asString()).contains("Phone");
         }
     }
 
@@ -104,9 +114,14 @@ class ProgressionTests {
 
         HttpResponse<String> say(String workspace, String key, String id, String text)
                 throws IOException, InterruptedException {
+            return say(workspace, key, id, text, 200);
+        }
+
+        HttpResponse<String> say(String workspace, String key, String id, String text, int status)
+                throws IOException, InterruptedException {
             var run = Map.of("threadId", "test", "runId", id, "state", Map.of("workspace", "beta"),
                     "messages", List.of(Map.of("id", id, "role", "user", "content", text)));
-            return request("POST", workspace + "/chat", key, run, "text/event-stream", 200);
+            return request("POST", workspace + "/chat", key, run, "text/event-stream", status);
         }
 
         private HttpResponse<String> request(String method, String route, String key, Object body,

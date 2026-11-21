@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd -- "$(dirname -- "$0")/.."
+./mvnw -U -B verify
+
+(
+  cd web
+  bun install --frozen-lockfile
+  bun run build
+)
+
+run_dir=$(mktemp -d "${TMPDIR:-/tmp}/dice-governed-chat.XXXXXX")
+java -jar target/dice-governed-chat.jar --server.port=0 \
+  --governed.store.path="$run_dir/chat.sqlite" >"$run_dir/server.log" 2>&1 &
+server_pid=$!
+trap 'kill "$server_pid" 2>/dev/null || true; wait "$server_pid" 2>/dev/null || true' EXIT
+
+port=
+for ((attempt = 0; attempt < 40; attempt++)); do
+  if ! kill -0 "$server_pid" 2>/dev/null; then break; fi
+  if grep -q 'Started Application' "$run_dir/server.log"; then
+    port=$(sed -nE 's/.*Tomcat started on port ([0-9]+).*/\1/p' "$run_dir/server.log" | tail -1)
+    if [[ -n "$port" ]]; then break; fi
+  fi
+  sleep 1
+done
+
+if [[ -z "$port" ]]; then
+  cat "$run_dir/server.log" >&2
+  exit 1
+fi
+
+printf 'Browser test server log: %s/server.log\n' "$run_dir"
+(
+  cd web
+  DICE_API_URL="http://127.0.0.1:$port" DICE_LIVE_E2E=1 bun run test
+)

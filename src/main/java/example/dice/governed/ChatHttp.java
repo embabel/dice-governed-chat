@@ -85,6 +85,16 @@ final class ChatHttp {
                 .body(Map.of("message", "History is unavailable at the requested time."));
     }
 
+    @ExceptionHandler(Workflow.RequestConflict.class)
+    ResponseEntity<Map<String, String>> conflictingRequest(Workflow.RequestConflict conflict) {
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("message", conflict.getMessage()));
+    }
+
+    @ExceptionHandler(Workflow.ReviewUnavailable.class)
+    ResponseEntity<Map<String, String>> unavailableReview() {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("message", "Review unavailable."));
+    }
+
     record Source(String id, String text) {
     }
 }

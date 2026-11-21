@@ -76,6 +76,7 @@
         </repository>
     </repositories>
     <build>
+        <finalName>dice-governed-chat</finalName>
         <plugins>
             <plugin>
                 <groupId>org.springframework.boot</groupId>

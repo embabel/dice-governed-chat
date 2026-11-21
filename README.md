@@ -39,11 +39,12 @@ Try “Email is our preferred follow-up channel.” followed by “Phone is our 
 | What the app needs | DICE API |
 | --- | --- |
 | Extract claims and resolve mentions from the incoming message | `PropositionPipeline` |
-| Route a disputed or uncertain claim to review | `GateApplier` and `ExtractionGate` |
-| Choose a bounded set of facts and keep the approved policy in it | `Memory` and `ContextBudget` |
+| Screen extracted claims for sufficient confidence | `ConfidenceGate` |
+| Read active claims within one workspace | `ScopedReads` and `ContextReadScope` |
+| Choose a bounded set of facts and keep the approved policy in it | `ContextBudget` |
 | Record changes and read earlier belief sets | `AuditingPropositionRepository` and `DrivineAuditLogStore` |
 
-The application owns workspace authorization and reviewer permissions. It asks Embabel's `DecisionService` through a model role to classify ordinary claims against candidates from the same workspace. The application stores review requests and source messages in SQLite with the same write boundary as the audited changes. Historical belief sets include the recorded proposition fields. Use the source panel on a current proposition or pending review to open its original message.
+The application owns workspace authorization and reviewer permissions. It asks Embabel's `DecisionService` through a model role to classify ordinary claims against candidates from the same workspace. If the decision cannot identify a safe change, the proposal remains available for inspection and approval is disabled. The application stores review requests and source messages in SQLite with the same write boundary as the audited changes. Historical belief sets include the recorded proposition fields. Use the source panel on a current proposition or pending review to open its original message.
 
 Each workspace establishes a complete baseline before it accepts writes. Later historical reads are served only within verified audit coverage. The app shows a local demo identity for each role. Integrate your identity provider and workspace membership rules before exposing an adapted application.
 

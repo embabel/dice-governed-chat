@@ -87,7 +87,9 @@ final class ChatHttp {
 
     @ExceptionHandler(Workflow.RequestConflict.class)
     ResponseEntity<Map<String, String>> conflictingRequest(Workflow.RequestConflict conflict) {
-        return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("message", conflict.getMessage()));
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of("message", conflict.getMessage()));
     }
 
     @ExceptionHandler(Workflow.ReviewUnavailable.class)

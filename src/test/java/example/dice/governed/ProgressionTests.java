@@ -1,0 +1,133 @@
+package example.dice.governed;
+
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+import org.springframework.boot.builder.SpringApplicationBuilder;
+import org.springframework.boot.web.server.context.WebServerApplicationContext;
+import org.springframework.context.ConfigurableApplicationContext;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
+
+import java.io.IOException;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.file.Path;
+import java.time.Duration;
+import java.util.List;
+import java.util.Map;
+import java.util.stream.StreamSupport;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+class ProgressionTests {
+    private static final String DISPUTE = "Support leads can approve refunds within 60 days.";
+    private static final String DESK = "desk-demo";
+    private static final String REVIEWER = "reviewer-demo";
+    private static final String BETA = "beta-demo";
+    private static final JsonMapper JSON = JsonMapper.builder().build();
+
+    @TempDir
+    Path folder;
+
+    @Test
+    void disputedPolicySurvivesRestartAndOnlyAReviewerCanChangeTheBeliefSet() throws Exception {
+        String reviewId;
+        String beforeApproval;
+
+        try (var app = start()) {
+            JsonNode initial = app.json("GET", "acme/state", DESK, null, 200);
+            assertThat(claims(initial, true)).anyMatch(text -> text.contains("30 days"));
+
+            var reply = app.say("acme", DESK, "dispute-1", DISPUTE);
+            assertThat(reply.body()).contains("TEXT_MESSAGE_CONTENT", "STATE_SNAPSHOT", "RUN_FINISHED");
+            assertThat(reply.headers().firstValue("Content-Type")).hasValueSatisfying(
+                    contentType -> assertThat(contentType).startsWith("text/event-stream"));
+
+            JsonNode disputed = app.json("GET", "acme/state", DESK, null, 200);
+            assertThat(claims(disputed, true)).anyMatch(text -> text.contains("30 days"));
+            assertThat(disputed.path("reviews").size()).isOne();
+            reviewId = disputed.path("reviews").get(0).path("id").asString();
+            beforeApproval = disputed.path("observedAt").asString();
+            assertThat(app.json("GET", "acme/sources/dispute-1", DESK, null, 200).path("text").asString())
+                    .isEqualTo(DISPUTE);
+            app.json("POST", "acme/reviews/" + reviewId + "/approve", DESK, null, 403);
+            app.json("GET", "beta/state", REVIEWER, null, 404);
+            app.json("GET", "beta/sources/dispute-1", BETA, null, 404);
+        }
+
+        try (var app = start()) {
+            JsonNode resumed = app.json("GET", "acme/state", REVIEWER, null, 200);
+            assertThat(resumed.path("reviews").get(0).path("id").asString()).isEqualTo(reviewId);
+            JsonNode approved = app.json("POST", "acme/reviews/" + reviewId + "/approve", REVIEWER, null, 200);
+            assertThat(approved.path("reviews").size()).isZero();
+            assertThat(claims(approved, true)).anyMatch(text -> text.contains("60 days"))
+                    .noneMatch(text -> text.contains("30 days"));
+            assertThat(app.json("GET", "acme/sources/dispute-1", REVIEWER, null, 200).path("text").asString())
+                    .isEqualTo(DISPUTE);
+
+            JsonNode prior = app.json("GET", "acme/history?asOf=" + beforeApproval, REVIEWER, null, 200);
+            assertThat(claims(prior, true)).anyMatch(text -> text.contains("30 days"))
+                    .noneMatch(text -> text.contains("60 days"));
+            JsonNode beta = app.json("GET", "beta/state", BETA, null, 200);
+            assertThat(claims(beta, true)).anyMatch(text -> text.contains("30 days"))
+                    .noneMatch(text -> text.contains("60 days"));
+            app.json("GET", "acme/history?asOf=2000-01-01T00:00:00Z", REVIEWER, null, 422);
+        }
+    }
+
+    private static List<String> claims(JsonNode state, boolean pinned) {
+        return StreamSupport.stream(state.path("claims").spliterator(), false)
+                .filter(claim -> claim.path("pinned").asBoolean() == pinned)
+                .map(claim -> claim.path("text").asString())
+                .toList();
+    }
+
+    private RunningApp start() {
+        var context = new SpringApplicationBuilder(Application.class).run(
+                "--server.port=0", "--governed.store.path=" + folder.resolve("chat.db"),
+                "--spring.main.banner-mode=off", "--logging.level.root=WARN");
+        var port = ((WebServerApplicationContext) context).getWebServer().getPort();
+        return new RunningApp(context, port);
+    }
+
+    private record RunningApp(ConfigurableApplicationContext context, int port) implements AutoCloseable {
+        private static final HttpClient CLIENT = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(3))
+                .build();
+
+        JsonNode json(String method, String route, String key, Object body, int status)
+                throws IOException, InterruptedException {
+            return JSON.readTree(request(method, route, key, body, "application/json", status).body());
+        }
+
+        HttpResponse<String> say(String workspace, String key, String id, String text)
+                throws IOException, InterruptedException {
+            var run = Map.of("threadId", "test", "runId", id, "state", Map.of("workspace", "beta"),
+                    "messages", List.of(Map.of("id", id, "role", "user", "content", text)));
+            return request("POST", workspace + "/chat", key, run, "text/event-stream", 200);
+        }
+
+        private HttpResponse<String> request(String method, String route, String key, Object body,
+                                             String accept, int status) throws IOException, InterruptedException {
+            var uri = URI.create("http://127.0.0.1:" + port + "/api/workspaces/" + route);
+            var request = HttpRequest.newBuilder(uri)
+                    .header("Authorization", "Bearer " + key)
+                    .header("Content-Type", "application/json")
+                    .header("Accept", accept)
+                    .timeout(Duration.ofSeconds(15))
+                    .method(method, body == null ? HttpRequest.BodyPublishers.noBody()
+                            : HttpRequest.BodyPublishers.ofString(JSON.writeValueAsString(body)))
+                    .build();
+            var response = CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
+            assertThat(response.statusCode()).as("%s %s: %s", method, route, response.body()).isEqualTo(status);
+            return response;
+        }
+
+        @Override
+        public void close() {
+            context.close();
+        }
+    }
+}

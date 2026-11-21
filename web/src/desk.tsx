@@ -87,7 +87,7 @@ export function DeskWorkspace({ session }: { session: Session }) {
                 <p className="muted">{review.reason}</p>
                 <div className="review-actions">
                   <button type="button" className="quiet" onClick={() => setSourceId(review.sourceId)}>View source</button>
-                  {session === 'reviewer' && (
+                  {session === 'reviewer' && review.approvable !== false && (
                     <button className="secondary" type="button" disabled={approving !== undefined} onClick={() => approve(review.id)}>
                       {approving === review.id ? 'Approving…' : 'Approve'}
                     </button>

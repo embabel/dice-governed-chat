@@ -110,6 +110,24 @@ test('reviews a proposed policy change and keeps earlier beliefs inspectable', a
   await verifyReviewFlow(page)
 })
 
+test('a reviewer can inspect an unresolved decision without approving it', async ({ page }) => {
+  const reason = 'The revision decision did not provide a usable answer.'
+  await page.route(`${api}/state`, (route) => route.fulfill({
+    json: {
+      baseline, observedAt, claims: [initialClaim],
+      reviews: [{ id: 'unresolved', text: phone, sourceId: 'phone-message', reason, approvable: false }],
+    },
+  }))
+
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Reviewer', exact: true }).click()
+  const pending = page.getByRole('region', { name: 'Pending review' })
+  await expect(pending.getByText(phone, { exact: true })).toBeVisible()
+  await expect(pending.getByText(reason, { exact: true })).toBeVisible()
+  await expect(pending.getByRole('button', { name: 'View source' })).toBeVisible()
+  await expect(pending.getByRole('button', { name: 'Approve' })).toHaveCount(0, { timeout: 750 })
+})
+
 test('runs the review progression against the real application', async ({ page }) => {
   test.skip(process.env.DICE_LIVE_E2E !== '1', 'Requires a fresh running DICE application')
   await verifyReviewFlow(page)

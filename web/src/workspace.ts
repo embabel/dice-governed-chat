@@ -10,6 +10,7 @@ export interface Review {
   text: string
   sourceId: string
   reason: string
+  approvable?: boolean
 }
 
 export interface Workspace {

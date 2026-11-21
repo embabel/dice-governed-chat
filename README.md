@@ -1,0 +1,71 @@
+# Governed support chat
+
+A support desk uses DICE to remember approved policy and facts from conversations. An operator can inspect the message behind a proposed change. A reviewer can approve it. The audit trail shows which policy was in force before the approval.
+
+The app runs locally with scripted model replies and a file-backed SQLite store. The same chat path can use a live model.
+
+## Run locally
+
+Use Java 21 and Bun. The server resolves DICE `0.5.0-SNAPSHOT` from the Embabel snapshot repository and Embabel Agent `1.5.4`. The app uses the published DICE snapshot because it needs the scoped store and durable history APIs.
+
+Start the server.
+
+```sh
+./mvnw -B spring-boot:run
+```
+
+Start the web app in a second terminal.
+
+```sh
+cd web
+bun install --frozen-lockfile
+bun run dev --host 127.0.0.1
+```
+
+Open [the support desk](http://127.0.0.1:5173). The server listens on loopback. To use a different server port, set `DICE_API_URL` when starting Vite.
+
+## Follow a policy change
+
+1. As **Support desk**, send “Support leads can approve refunds within 60 days.” The claim goes to review. The pinned 30-day policy remains current.
+2. Open the proposed change's source to read the original message. Note the time shown for the current belief set.
+3. Switch to **Reviewer** and approve the change. The 60-day policy becomes current. Its source still points to the original support message.
+4. Use the history view to read at the time recorded before approval. It shows the earlier policy. A time before the baseline returns unavailable.
+5. Restart the server with the same database and reopen the support desk. The policy and history remain available.
+
+Try “Email is our preferred follow-up channel.” followed by “Phone is our preferred follow-up channel.” The second claim gives Embabel Decision an existing fact to compare. Protected policy follows the approval workflow.
+
+## What DICE does
+
+| Application responsibility | DICE API |
+| --- | --- |
+| Extract claims and resolve mentions from the incoming message | `PropositionPipeline` |
+| Route a disputed or uncertain claim to review | `GateApplier` and `ExtractionGate` |
+| Keep the approved policy available when choosing prompt context | `Memory` and `ContextBudget` |
+| Record changes and read earlier belief sets | `AuditingPropositionRepository` and `DrivineAuditLogStore` |
+
+The application owns workspace authorization and reviewer permissions. It asks Embabel's `DecisionService` through a model role to classify ordinary claims against candidates from the same workspace. The application stores review requests and source messages in SQLite with the same write boundary as the audited changes. Historical belief sets include the recorded proposition fields. Use the source panel on a current proposition or pending review to open its original message.
+
+Each workspace establishes a complete baseline before it accepts writes. Later historical reads are served only within verified audit coverage. The app shows a local demo identity for each role. Integrate your identity provider and workspace membership rules before exposing an adapted application.
+
+## Live models
+
+Set `OPENAI_API_KEY` in your environment and run the server with the live profile.
+
+```sh
+./mvnw -B spring-boot:run -Dspring-boot.run.profiles=live
+```
+
+Use a separate database path with `GOVERNED_CHAT_DB` to keep scripted and live workspaces separate. Keep provider credentials outside the repository. See [the server configuration](src/main/resources) for the model-role settings.
+
+## Verify
+
+```sh
+./mvnw -B verify
+cd web
+bun install --frozen-lockfile
+bun run build
+bunx playwright install chromium
+bun run test
+```
+
+The Java progression test exercises the HTTP and AG-UI entry points, rejects cross-workspace reads, reopens the database with a pending review, and checks the current and earlier policy after approval.

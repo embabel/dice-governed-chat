@@ -17,6 +17,9 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.StreamSupport;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -87,6 +90,37 @@ class ProgressionTests {
         }
     }
 
+    @Test
+    void onlyOneOfTwoServersCanApproveTheSameReview() throws Exception {
+        try (var first = start(); var second = start();
+             var workers = Executors.newVirtualThreadPerTaskExecutor()) {
+            first.say("acme", DESK, "dispute", DISPUTE);
+            var before = first.json("GET", "acme/state", DESK, null, 200);
+            var reviewId = before.path("reviews").get(0).path("id").asString();
+            var route = "acme/reviews/" + reviewId + "/approve";
+            var start = new CountDownLatch(1);
+
+            var approvals = List.of(first, second).stream().map(app -> workers.submit(() -> {
+                if (!start.await(5, TimeUnit.SECONDS)) {
+                    throw new IllegalStateException("Test did not start both approvals");
+                }
+                return app.send("POST", route, REVIEWER, null, "application/json").statusCode();
+            })).toList();
+            start.countDown();
+
+            assertThat(List.of(approvals.get(0).get(10, TimeUnit.SECONDS),
+                    approvals.get(1).get(10, TimeUnit.SECONDS))).containsExactlyInAnyOrder(200, 404);
+            for (var app : List.of(first, second)) {
+                var after = app.json("GET", "acme/state", REVIEWER, null, 200);
+                assertThat(after.path("reviews").size()).isZero();
+                assertThat(claims(after, true)).containsExactly(DISPUTE);
+                var prior = app.json("GET", "acme/history?asOf=" + before.path("observedAt").asString(),
+                        REVIEWER, null, 200);
+                assertThat(claims(prior, true)).containsExactly("Support leads can approve refunds within 30 days.");
+            }
+        }
+    }
+
     private static List<String> claims(JsonNode state, boolean pinned) {
         return StreamSupport.stream(state.path("claims").spliterator(), false)
                 .filter(claim -> claim.path("pinned").asBoolean() == pinned)
@@ -126,6 +160,13 @@ class ProgressionTests {
 
         private HttpResponse<String> request(String method, String route, String key, Object body,
                                              String accept, int status) throws IOException, InterruptedException {
+            var response = send(method, route, key, body, accept);
+            assertThat(response.statusCode()).as("%s %s: %s", method, route, response.body()).isEqualTo(status);
+            return response;
+        }
+
+        private HttpResponse<String> send(String method, String route, String key, Object body, String accept)
+                throws IOException, InterruptedException {
             var uri = URI.create("http://127.0.0.1:" + port + "/api/workspaces/" + route);
             var request = HttpRequest.newBuilder(uri)
                     .header("Authorization", "Bearer " + key)
@@ -135,9 +176,7 @@ class ProgressionTests {
                     .method(method, body == null ? HttpRequest.BodyPublishers.noBody()
                             : HttpRequest.BodyPublishers.ofString(JSON.writeValueAsString(body)))
                     .build();
-            var response = CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
-            assertThat(response.statusCode()).as("%s %s: %s", method, route, response.body()).isEqualTo(status);
-            return response;
+            return CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
         }
 
         @Override

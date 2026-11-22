@@ -1,8 +1,5 @@
 package example.dice.governed;
 
-import com.embabel.agent.core.DataDictionary;
-import com.embabel.agent.rag.service.NamedEntityDataRepository;
-import com.embabel.agent.rag.service.support.InMemoryNamedEntityDataRepository;
 import com.embabel.dice.audit.AuditCanonicalLookup;
 import com.embabel.dice.audit.AuditContextProvider;
 import com.embabel.dice.audit.AuditFailurePolicy;
@@ -23,7 +20,6 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
 
 final class Storage {
@@ -34,7 +30,6 @@ final class Storage {
     private final DrivineAuditLogStore audit;
     private final PersistenceManager manager;
     private final JsonMapper mapper = JsonMapper.builder().findAndAddModules().build();
-    private final Map<String, NamedEntityDataRepository> workspaces = new ConcurrentHashMap<>();
 
     Storage(DrivinePropositionRepository raw, DrivineAuditLogStore audit, PersistenceManager manager) {
         this.canonicalLookup = raw.auditCanonicalLookup();
@@ -63,11 +58,6 @@ final class Storage {
 
     DrivineAuditLogStore audit() {
         return audit;
-    }
-
-    NamedEntityDataRepository entities(String workspace) {
-        return workspaces.computeIfAbsent(workspace,
-                key -> new InMemoryNamedEntityDataRepository(DataDictionary.fromClasses("Support")));
     }
 
     /** The workspace marker and complete baseline are installed together on first use. */
@@ -104,7 +94,18 @@ final class Storage {
                 MATCH (r:GovernedChatReview {workspace: $workspace})
                 RETURN {id: r.id, fact: r.fact, reason: r.reason} ORDER BY r.id
                 """, Map.of("workspace", workspace)).transform(ReviewRow.class));
-        return rows.stream().map(row -> new Pending(row.id(), deserialize(row.fact()), row.reason())).toList();
+        return rows.stream().map(this::pending).toList();
+    }
+
+    Optional<Pending> pending(String workspace, String id) {
+        return manager.optionalGetOne(query("""
+                MATCH (r:GovernedChatReview {workspace: $workspace, id: $id})
+                RETURN {id: r.id, fact: r.fact, reason: r.reason}
+                """, Map.of("workspace", workspace, "id", id)).transform(ReviewRow.class)).map(this::pending);
+    }
+
+    private Pending pending(ReviewRow row) {
+        return new Pending(row.id(), deserialize(row.fact()), row.reason());
     }
 
     void deleteReview(String workspace, String id) {
@@ -150,7 +151,7 @@ final class Storage {
         try {
             return mapper.writeValueAsString(fact);
         } catch (JsonProcessingException failure) {
-            throw new IllegalStateException("Could not encode pending review");
+            throw new IllegalStateException("Could not encode pending review", failure);
         }
     }
 
@@ -158,7 +159,7 @@ final class Storage {
         try {
             return mapper.readValue(serialized, Proposition.class);
         } catch (JsonProcessingException failure) {
-            throw new IllegalStateException("Could not read pending review");
+            throw new IllegalStateException("Could not read pending review", failure);
         }
     }
 

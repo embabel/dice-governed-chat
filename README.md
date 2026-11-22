@@ -53,19 +53,48 @@ Try “Email is our preferred follow-up channel.” followed by “Phone is our 
 
 | What the app needs | DICE API |
 | --- | --- |
-| Extract claims and resolve mentions from the incoming message | `PropositionPipeline` |
+| Store propositions in SQLite | `dice-starter-sqlite` auto-configuration |
+| Extract claims and ground their mentions in the incoming message | `PropositionPipeline` |
 | Screen extracted claims for sufficient confidence | `ConfidenceGate` |
 | Read active claims within one workspace | `ScopedReads` and `ContextReadScope` |
 | Choose a bounded set of facts and keep the approved policy in it | `ContextBudget` |
-| Record changes and read earlier belief sets | `AuditingPropositionRepository` and `DrivineAuditLogStore` |
+| Register the opt-in audit schema | `AuditLogSchema` |
+| Record proposition changes and read earlier belief sets | `AuditingPropositionRepository` and `DrivineAuditLogStore` |
 
-The application owns workspace authorization and reviewer permissions. It asks Embabel's `DecisionService` through a model role to classify ordinary claims against candidates from the same workspace. If the decision cannot identify a safe change, the proposal remains available for inspection and approval is disabled. The application stores review requests and source messages in SQLite with the same write boundary as the audited changes. Historical belief sets include the recorded proposition fields. Use the source panel on a current proposition or pending review to open its original message.
+The SQLite starter configures the persistent proposition store from the datasource in [application.yml](src/main/resources/application.yml). [StorageConfiguration](src/main/java/example/dice/governed/StorageConfiguration.java) registers the opt-in audit schema and uses the starter’s persistence manager and Spring transaction manager. [Storage](src/main/java/example/dice/governed/Storage.java) wraps the starter’s store in `AuditingPropositionRepository`. The demo stores grounded mentions on propositions and uses their types and spans to compare claims.
 
-The refund workflow checks the full extracted claim for a supported workspace-wide rule, such as “The refund window is 60 days.” A recognized change can replace the pinned rule after review. A customer-specific exception or unsupported wording stays pending for clarification. A recognizable completed event, such as “Alice received a partial refund yesterday,” enters ordinary memory.
+The application owns source messages and pending reviews. Their tables live in the same SQLite database, so one transaction covers app rows and DICE rows. Historical belief sets include the recorded proposition fields.
 
-Each workspace establishes a complete baseline before it accepts writes. Later historical reads are served only within verified audit coverage. The app shows a local demo identity for each role. Integrate your identity provider and workspace membership rules before exposing an adapted application.
+## How a write commits
 
-The demo budgets each current workspace read for 200 active propositions. Approval looks up a matching archived claim by scope and exact text, so accumulated history does not count against that read budget. The historical view still reconstructs the complete belief set for the requested instant.
+A chat message is handled in two phases.
+
+1. [Workflow](src/main/java/example/dice/governed/Workflow.java) takes a scoped snapshot in a short transaction. Extraction and [AdmissionPolicy](src/main/java/example/dice/governed/AdmissionPolicy.java) then run outside the transaction, including any `DecisionService` call.
+2. Commit through `audit.duringWrite`. Recheck the message ID and the active proposition revisions inside the transaction. Repeating the same ID and text returns an already-processed response. Reusing the ID for different text, or planning from facts that changed in the meantime, returns `409 Conflict`. A successful commit writes the source, reviews, proposition changes and audit records together.
+
+Approval looks up the review by exact workspace and review ID. One transaction checks the target revision, supersedes the prior fact, stores the approved one and retires the review. If any write fails, the whole approval rolls back.
+
+The desk reads current beliefs and pending reviews inside the same transaction. Source messages are immutable and fetched separately by workspace and ID. Historical reads require a complete baseline for the workspace. Each workspace records that baseline before it accepts writes. A time before the baseline returns unavailable.
+
+The demo budgets each current workspace read for 200 active propositions. Approval looks up the pending review by ID and checks its target against the scoped active facts. The historical view still reconstructs the complete belief set for the requested instant.
+
+Open an existing `data/governed-chat.sqlite` to resume the workspace and approve reviews that were already pending.
+
+## Adapting the example
+
+Keep the transaction boundary when adapting the workflow.
+
+- Run model calls outside the transaction. Recheck what the plan read and commit inside one.
+- Write audit records in the same transaction as the change they describe.
+- Keep app-owned rows on the DICE datasource when they must change together with propositions.
+- Return `409 Conflict` for a stale plan so the client can retry against current facts.
+
+Replace the example auth and refund rules with your application’s policy.
+
+- **Identity.** The server maps each demo token to a fixed workspace and role. The application checks workspace membership and reviewer permissions. Integrate your identity provider and workspace membership rules before exposing an adapted application.
+- **Refund classifier.** The refund workflow checks the full extracted claim for one supported workspace-wide rule, such as “The refund window is 60 days.” A recognized change can replace the pinned rule after review. A customer-specific exception or unsupported wording stays pending for clarification. A recognizable completed event, such as “Alice received a partial refund yesterday,” enters ordinary memory. Replace it with rules for your own domain.
+
+For ordinary claims the app asks `DecisionService` through a model role to classify the claim against candidates from the same workspace. If the decision cannot identify a safe change, the proposal remains available for inspection and approval is disabled. Use the source panel on a current proposition or pending review to open its original message.
 
 ## Live models
 

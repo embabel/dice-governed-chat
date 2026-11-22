@@ -54,6 +54,19 @@ export async function request<T>(session: Session, path: string, options?: Reque
   return response.json() as Promise<T>
 }
 
+export function keepLatestWorkspace(current: Workspace | undefined, received: Workspace): Workspace {
+  if (!current) return received
+  const difference = Date.parse(current.observedAt) - Date.parse(received.observedAt)
+  if (difference !== 0) return difference > 0 ? current : received
+
+  // Java Instant can distinguish observations within the same browser millisecond.
+  return utcFraction(current.observedAt) > utcFraction(received.observedAt) ? current : received
+}
+
+function utcFraction(instant: string): string {
+  return (instant.match(/\.(\d{1,9})Z$/)?.[1] ?? '').padEnd(9, '0')
+}
+
 const timeFormat = new Intl.DateTimeFormat(undefined, {
   dateStyle: 'medium',
   timeStyle: 'medium',

@@ -46,7 +46,11 @@ Try “Email is our preferred follow-up channel.” followed by “Phone is our 
 
 The application owns workspace authorization and reviewer permissions. It asks Embabel's `DecisionService` through a model role to classify ordinary claims against candidates from the same workspace. If the decision cannot identify a safe change, the proposal remains available for inspection and approval is disabled. The application stores review requests and source messages in SQLite with the same write boundary as the audited changes. Historical belief sets include the recorded proposition fields. Use the source panel on a current proposition or pending review to open its original message.
 
+The refund workflow checks the full extracted claim for a supported workspace-wide rule, such as “The refund window is 60 days.” A recognized change can replace the pinned rule after review. A customer-specific exception or unsupported wording stays pending for clarification. A recognizable completed event, such as “Alice received a partial refund yesterday,” enters ordinary memory.
+
 Each workspace establishes a complete baseline before it accepts writes. Later historical reads are served only within verified audit coverage. The app shows a local demo identity for each role. Integrate your identity provider and workspace membership rules before exposing an adapted application.
+
+The demo budgets each current workspace read for 200 active propositions. Approval looks up a matching archived claim by scope and exact text, so accumulated history does not count against that read budget. The historical view still reconstructs the complete belief set for the requested instant.
 
 ## Live models
 
@@ -56,7 +60,13 @@ Set `OPENAI_API_KEY` in your environment and run the server with the live profil
 ./mvnw -B spring-boot:run -Dspring-boot.run.profiles=live
 ```
 
-Use a separate database path with `GOVERNED_CHAT_DB` to keep scripted and live workspaces separate. Keep provider credentials outside the repository. See [the server configuration](src/main/resources) for the model-role settings.
+The scripted profile uses `data/governed-chat.sqlite`. The live profile uses `data/governed-chat-live.sqlite`. Set `GOVERNED_CHAT_DB` to override the path. Keep provider credentials outside the repository.
+
+| Setting | Default in the live profile | Use |
+| --- | --- | --- |
+| `GOVERNED_CHAT_MODEL` | `gpt-4.1-mini` | Extract claims from chat text. |
+| `GOVERNED_CHAT_DECISION_MODEL` | `gpt-4.1-mini` | Answer the typed questions for the `dice-revision` role. |
+| `GOVERNED_CHAT_EMBEDDING_MODEL` | `text-embedding-3-small` | Supply embeddings to the DICE store. |
 
 ## Verify
 

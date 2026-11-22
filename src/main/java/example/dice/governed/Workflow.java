@@ -37,9 +37,9 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.regex.Pattern;
 import java.util.stream.IntStream;
 
 @Service
@@ -51,6 +51,60 @@ final class Workflow {
     private static final String TARGET = "governed.review.target";
     private static final String TARGET_REVISION = "governed.review.target-revision";
     private static final String POLICY_CHANGE = "A change to the approved refund policy needs review.";
+    private static final String POLICY_TERMS = "(?:policy|window|deadline|eligibility|period|time limit|rules?)";
+    private static final String REFUND_TOPIC =
+            "(?:refunds?\\s+" + POLICY_TERMS + "|" + POLICY_TERMS + "\\s+(?:for|on)\\s+refunds?)";
+    private static final String NUMBER = "(?:[0-9]+|one|two|three|four|five|six|seven|eight|nine|ten|twelve)";
+    private static final String DURATION = NUMBER + "\\s+(?:hours?|days?|weeks?|months?|years?)";
+    private static final String WEEKDAY = "(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)";
+    private static final String POLICY_DATE = "(?:" + WEEKDAY + "|[0-9]{4}-[0-9]{2}-[0-9]{2})";
+    private static final String REFUND_TIMING =
+            "\\s+(?:(?:within|for(?:\\s+up\\s+to)?)\\s+" + DURATION
+                    + "(?:\\s+after\\s+(?:purchase|delivery))?|(?:until|through)\\s+" + POLICY_DATE + ")";
+    private static final String WORKSPACE_POLICY_END =
+            "(?:\\s+for\\s+(?:all|every|any)\\s+(?:customers?|accounts?|orders?|purchases?))?"
+                    + "(?:,?\\s+effective\\s+on\\s+" + POLICY_DATE + ")?[.!]?\\s*";
+    private static final Pattern POLICY_TOPIC = Pattern.compile(
+            "\\s*(?:(?:the|our|company|workspace)\\s+)?" + REFUND_TOPIC
+                    + "(?:\\s*[:=]\\s*|\\s+(?:is|are|ends?|lasts?|expires?)\\s+)"
+                    + "(?:" + DURATION + "|" + POLICY_DATE + "|(?:open|active)" + REFUND_TIMING + ")"
+                    + WORKSPACE_POLICY_END,
+            Pattern.CASE_INSENSITIVE);
+    private static final Pattern POLICY_REFERENCE = Pattern.compile("\\b" + REFUND_TOPIC + "\\b", Pattern.CASE_INSENSITIVE);
+    private static final String APPROVAL_ROLES = "(?:support leads?|team leads?|supervisors?|managers?|administrators?)";
+    private static final String MODIFIERS = "(?:(?:only|now|not)\\s+)*";
+    private static final Pattern ROLE_AUTHORITY = Pattern.compile(
+            "\\s*(?:only\\s+)?(?:the\\s+)?" + APPROVAL_ROLES + "\\s+(?:(?:can|cannot|may|must|should)\\s+" + MODIFIERS
+                    + "|(?:is|are)\\s+" + MODIFIERS + "(?:authorized|allowed|required|permitted)\\s+to\\s+)"
+                    + "(?:approve|authorize|issue|process)\\s+(?:an?\\s+)?refunds?"
+                    + "(?:" + REFUND_TIMING + ")?" + WORKSPACE_POLICY_END,
+            Pattern.CASE_INSENSITIVE);
+    private static final Pattern GENERAL_REFUND_RULE = Pattern.compile(
+            "\\s*(?:refunds\\s+(?:(?:can|cannot|may|must|should)\\s+" + MODIFIERS + "be|are)\\s+" + MODIFIERS
+                    + "(?:approved|issued|processed|requested|available|allowed)(?:\\s+by\\s+" + APPROVAL_ROLES + ")?"
+                    + "|customers\\s+are\\s+" + MODIFIERS + "eligible\\s+for\\s+refunds)"
+                    + "(?:" + REFUND_TIMING + ")?" + WORKSPACE_POLICY_END,
+            Pattern.CASE_INSENSITIVE);
+    private static final Pattern REFUND = Pattern.compile("\\brefund(?:s|ed|ing)?\\b", Pattern.CASE_INSENSITIVE);
+    private static final String HISTORICAL_ACTIONS = "(?:requested|received|issued|approved|processed|denied|rejected|canceled|cancelled)";
+    private static final String CALENDAR_DATE =
+            "(?:January|February|March|April|May|June|July|August|September|October|November|December)"
+                    + "\\s+[0-9]{1,2}(?:,\\s*[0-9]{4})?";
+    private static final String EVENT_DATE = "(?:\\s+(?:yesterday|today|" + DURATION + "\\s+ago"
+            + "|on\\s+(?:" + POLICY_DATE + "|" + CALENDAR_DATE + ")))?[.!]?\\s*";
+    private static final String SERVICE_ACTOR = "(?:(?:a|an|the)\\s+(?:customer|support agent|support lead)"
+            + "|(?!(?:am|is|are|was|were|be|been|being)\\b)(?-i:[\\p{Lu}][\\p{L}'’\\-]*))";
+    private static final Pattern HISTORICAL_REFUND_ACTION = Pattern.compile(
+            "\\s*(?:" + SERVICE_ACTOR + "\\s+" + HISTORICAL_ACTIONS
+                    + "\\s+(?:(?:a|an|the|their|his|her|" + NUMBER + ")\\s+)?(?:(?:full|partial)\\s+)?refunds?"
+                    + "|(?:(?:a|an|the)\\s+)?(?:(?:full|partial)\\s+)?refunds?\\s+(?:was|were|has been|have been)\\s+"
+                    + HISTORICAL_ACTIONS + ")" + EVENT_DATE,
+            Pattern.CASE_INSENSITIVE);
+    private static final Pattern REFUND_PERMISSION_CUES = Pattern.compile(
+            "\\b(?:can|cannot|might|must|should|authorized|allowed|eligible|entitled|if|unless|whenever)\\b"
+                    + "|\\b(?:every|each|anyone|everyone|always|never)\\b"
+                    + "|\\bmay\\s+(?:only|now|be|have|approve|authorize|issue|process|request|receive)\\b",
+            Pattern.CASE_INSENSITIVE);
     private static final ReadBudget READ_BUDGET = ReadBudget.ofRows(200);
     private static final ContextBudget CONTEXT_BUDGET = ContextBudget.ofTokens(128);
     private static final DataDictionary SCHEMA =
@@ -155,9 +209,7 @@ final class Workflow {
                 metadata.remove(TARGET);
                 metadata.remove(TARGET_REVISION);
                 var confirmed = proposed.toDraft().withMetadata(metadata).toProposition();
-                var sameText = read(workspace, ReadCriteria.empty()).stream()
-                        .filter(fact -> fact.getText().equals(confirmed.getText()))
-                        .findFirst();
+                var sameText = storage.findCanonicalMatch(confirmed);
                 // The store reuses IDs for exact text. Restore an earlier claim through its own ID.
                 var accepted = sameText.map(fact -> fact.absorbEvidence(confirmed)).orElse(confirmed)
                         .withStatus(PropositionStatus.ACTIVE).withPinned(policy).toDraft();
@@ -226,6 +278,10 @@ final class Workflow {
             }
             return new Admission(fact, approved, Disposition.REVIEW, POLICY_CHANGE);
         }
+        if (refundScopeIsUnclear(fact)) {
+            return new Admission(fact, null, Disposition.REVIEW,
+                    "Clarify whether this refund claim concerns one customer or the workspace policy.");
+        }
         var candidates = active.stream()
                 .filter(existing -> !existing.getPinned())
                 .filter(existing -> comparable(fact, existing))
@@ -268,23 +324,38 @@ final class Workflow {
     }
 
     private boolean comparable(Proposition incoming, Proposition candidate) {
-        return incoming.getMentions().stream().anyMatch(mention ->
-                candidate.getMentions().stream().anyMatch(existing -> sameType(mention, existing)
+        var incomingIdentity = incoming.getMentions().stream().filter(this::comparisonMention).toList();
+        var candidateIdentity = candidate.getMentions().stream().filter(this::comparisonMention).toList();
+        // A missed tag is not evidence that the facts are unrelated. Let Decision assess the text.
+        if (incomingIdentity.isEmpty() || candidateIdentity.isEmpty()) {
+            return true;
+        }
+        return incomingIdentity.stream().anyMatch(mention ->
+                candidateIdentity.stream().anyMatch(existing -> mention.getType().equalsIgnoreCase(existing.getType())
                         && (mention.getType().equalsIgnoreCase("ContactPreference")
                         || mention.getSpan().equalsIgnoreCase(existing.getSpan()))));
     }
 
-    private boolean sameType(EntityMention one, EntityMention other) {
-        return one.getType().equalsIgnoreCase(other.getType());
+    private boolean comparisonMention(EntityMention mention) {
+        return !mention.getSpan().isBlank() && (mention.getType().equalsIgnoreCase("ContactPreference")
+                || mention.getType().equalsIgnoreCase("Customer"));
     }
 
     private boolean describesPolicy(Proposition fact) {
-        if (fact.getMentions().stream().anyMatch(mention -> mention.getType().equalsIgnoreCase("RefundPolicy"))) {
-            return true;
-        }
-        var text = fact.getText().toLowerCase(Locale.ROOT);
-        return text.contains("refund") && (text.contains("approv") || text.contains("policy")
-                || text.contains("deadline") || text.contains("eligib") || text.contains(" days"));
+        var text = fact.getText();
+        // Approval needs a complete workspace statement. A recognized prefix leaves its scope unknown.
+        return POLICY_TOPIC.matcher(text).matches() || ROLE_AUTHORITY.matcher(text).matches()
+                || GENERAL_REFUND_RULE.matcher(text).matches();
+    }
+
+    private boolean refundScopeIsUnclear(Proposition fact) {
+        var text = fact.getText();
+        boolean refund = REFUND.matcher(text).find() || fact.getMentions().stream()
+                .anyMatch(mention -> mention.getType().equalsIgnoreCase("RefundPolicy"));
+        boolean completed = HISTORICAL_REFUND_ACTION.matcher(text).matches()
+                && !POLICY_REFERENCE.matcher(text).find()
+                && !REFUND_PERMISSION_CUES.matcher(text).find();
+        return refund && !completed;
     }
 
     private String reply(String workspace, List<Admission> admissions) {

@@ -1,11 +1,11 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useReducer, useRef, useState, type FormEvent } from 'react'
 import { Chat } from './chat'
 import {
-  type Claim, formatTime, type History, request, type Session, type Source, type Workspace, WorkspaceError,
+  type Claim, formatTime, type History, keepLatestWorkspace, request, type Session, type Source, type Workspace, WorkspaceError,
 } from './workspace'
 
 export function DeskWorkspace({ session }: { session: Session }) {
-  const [workspace, setWorkspace] = useState<Workspace>()
+  const [workspace, updateWorkspace] = useReducer(keepLatestWorkspace, undefined)
   const [revision, setRevision] = useState(0)
   const [loadError, setLoadError] = useState('')
   const [approvalError, setApprovalError] = useState('')
@@ -17,8 +17,7 @@ export function DeskWorkspace({ session }: { session: Session }) {
     const controller = new AbortController()
     request<Workspace>(session, '/state', { signal: controller.signal })
       .then((result) => {
-        setWorkspace((previous) => previous && Date.parse(previous.observedAt) > Date.parse(result.observedAt)
-          ? previous : result)
+        updateWorkspace(result)
         setLoadError('')
       })
       .catch(() => {
@@ -36,7 +35,7 @@ export function DeskWorkspace({ session }: { session: Session }) {
     setApproving(id)
     const previousObservation = workspace?.observedAt
     try {
-      setWorkspace(await request<Workspace>(session, `/reviews/${encodeURIComponent(id)}/approve`, { method: 'POST' }))
+      updateWorkspace(await request<Workspace>(session, `/reviews/${encodeURIComponent(id)}/approve`, { method: 'POST' }))
       setBeforeApproval(previousObservation)
     } catch (failure) {
       setApprovalError(failure instanceof WorkspaceError && failure.status === 403

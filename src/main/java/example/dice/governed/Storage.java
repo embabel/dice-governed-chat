@@ -3,6 +3,7 @@ package example.dice.governed;
 import com.embabel.agent.core.DataDictionary;
 import com.embabel.agent.rag.service.NamedEntityDataRepository;
 import com.embabel.agent.rag.service.support.InMemoryNamedEntityDataRepository;
+import com.embabel.dice.audit.AuditCanonicalLookup;
 import com.embabel.dice.audit.AuditContextProvider;
 import com.embabel.dice.audit.AuditFailurePolicy;
 import com.embabel.dice.audit.AuditingPropositionRepository;
@@ -28,6 +29,7 @@ import java.util.function.Supplier;
 final class Storage {
 
     private final PropositionRepository facts;
+    private final AuditCanonicalLookup canonicalLookup;
     private final ScopedReads reads;
     private final DrivineAuditLogStore audit;
     private final PersistenceManager manager;
@@ -35,8 +37,9 @@ final class Storage {
     private final Map<String, NamedEntityDataRepository> workspaces = new ConcurrentHashMap<>();
 
     Storage(DrivinePropositionRepository raw, DrivineAuditLogStore audit, PersistenceManager manager) {
+        this.canonicalLookup = raw.auditCanonicalLookup();
         this.facts = AuditingPropositionRepository.wrapping(raw, audit, AuditContextProvider.NONE,
-                AuditFailurePolicy.FAIL_WRITE, raw.auditCanonicalLookup());
+                AuditFailurePolicy.FAIL_WRITE, canonicalLookup);
         this.reads = raw.scopedReads();
         this.audit = audit;
         this.manager = manager;
@@ -44,6 +47,14 @@ final class Storage {
 
     PropositionRepository facts() {
         return facts;
+    }
+
+    /** Uses the same duplicate key as a DICE save. Status does not affect the canonical ID. */
+    Optional<Proposition> findCanonicalMatch(Proposition attempted) {
+        return Optional.ofNullable(canonicalLookup.findAuditCanonicalId(attempted))
+                .map(facts::findById)
+                .filter(fact -> attempted.getContextIdValue().equals(fact.getContextIdValue()))
+                .filter(fact -> attempted.getText().equals(fact.getText()));
     }
 
     ScopedReads reads() {

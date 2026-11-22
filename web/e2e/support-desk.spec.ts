@@ -128,6 +128,60 @@ test('a reviewer can inspect an unresolved decision without approving it', async
   await expect(pending.getByRole('button', { name: 'Approve' })).toHaveCount(0, { timeout: 750 })
 })
 
+test('a delayed approval response keeps the newer beliefs from a chat refresh', async ({ page }) => {
+  const policyReview = { id: 'refund-review', text: proposed, sourceId: 'refund-message', reason: 'Protected policy change' }
+  const otherReview = { id: 'other-review', text: phone, sourceId: 'phone-message', reason: 'Conflicting follow-up preference' }
+  const approvedClaim = { ...initialClaim, text: proposed, sources: ['refund-message'] }
+  const olderApproval = {
+    baseline, observedAt: '2026-11-21T12:00:01.123456789Z', claims: [approvedClaim], reviews: [otherReview],
+  }
+  let state = {
+    baseline, observedAt: '2026-11-21T12:00:01.123456788Z', claims: [initialClaim], reviews: [policyReview, otherReview],
+  }
+  let releaseApproval!: () => void
+  const delayApproval = new Promise<void>((resolve) => { releaseApproval = resolve })
+
+  await page.route(`${api}/state`, (route) => route.fulfill({ json: state }))
+  await page.route(`${api}/reviews/refund-review/approve`, async (route) => {
+    await delayApproval
+    await route.fulfill({ json: olderApproval })
+  })
+  await page.route(`${api}/chat`, (route) => {
+    const { threadId, runId } = route.request().postDataJSON()
+    state = {
+      ...olderApproval,
+      observedAt: '2026-11-21T12:00:01.12345679Z',
+      claims: [approvedClaim, { id: 'new-belief', text: email, pinned: false, sources: ['new-message'] }],
+    }
+    return route.fulfill({
+      contentType: 'text/event-stream',
+      body: [
+        { type: 'RUN_STARTED', threadId, runId },
+        { type: 'RUN_FINISHED', threadId, runId },
+      ].map((event) => `data: ${JSON.stringify(event)}\n\n`).join(''),
+    })
+  })
+
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Reviewer', exact: true }).click()
+  const pending = page.getByRole('region', { name: 'Pending review' })
+  const first = pending.locator('article').filter({ hasText: proposed })
+  const otherApproval = pending.locator('article').filter({ hasText: phone }).getByRole('button', { name: 'Approve' })
+  const approving = page.waitForRequest(`${api}/reviews/refund-review/approve`)
+  await first.getByRole('button', { name: 'Approve' }).click()
+  await approving
+
+  await page.getByRole('textbox', { name: 'Message support desk' }).fill(email)
+  await page.getByRole('button', { name: 'Send message' }).click()
+  const current = page.getByRole('region', { name: 'Current beliefs' })
+  await expect(current.getByText(email, { exact: true })).toBeVisible()
+  await expect(otherApproval).toBeDisabled()
+
+  releaseApproval()
+  await expect(otherApproval).toBeEnabled()
+  await expect(current.getByText(email, { exact: true })).toBeVisible({ timeout: 750 })
+})
+
 test('runs the review progression against the real application', async ({ page }) => {
   test.skip(process.env.DICE_LIVE_E2E !== '1', 'Requires a fresh running DICE application')
   await verifyReviewFlow(page)

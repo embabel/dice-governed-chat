@@ -11,6 +11,7 @@ import com.embabel.dice.common.SourceAnalysisContext;
 import com.embabel.dice.common.resolver.EscalatingEntityResolver;
 import com.embabel.dice.pipeline.PropositionPipeline;
 import com.embabel.dice.proposition.Proposition;
+import com.embabel.dice.proposition.PropositionStatus;
 import com.embabel.dice.proposition.extraction.LlmPropositionExtractor;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -62,6 +63,24 @@ class StorageTests {
             assertThatThrownBy(() -> storage.saveSource("support", "review-1", "Other text"))
                     .isInstanceOf(IllegalArgumentException.class);
             assertThat(storage.source("support", "review-1")).contains("Extend refunds to 60 days.");
+        }
+    }
+
+    @Test
+    void canonicalMatchFindsSupersededTextOnlyInTheAttemptedWorkspace() {
+        try (var application = start()) {
+            var storage = application.getBean(Storage.class);
+            storage.ensureBaseline("support");
+            var original = fact("Refunds are allowed for 30 days.").withStatus(PropositionStatus.SUPERSEDED);
+            var saved = storage.facts().save(original);
+
+            assertThat(storage.findCanonicalMatch(fact(original.getText())))
+                    .hasValueSatisfying(match -> {
+                        assertThat(match.getId()).isEqualTo(saved.getId());
+                        assertThat(match.getStatus()).isEqualTo(PropositionStatus.SUPERSEDED);
+                    });
+            var otherWorkspace = Proposition.draft("other", original.getText(), 0.9).toProposition();
+            assertThat(storage.findCanonicalMatch(otherWorkspace)).isEmpty();
         }
     }
 

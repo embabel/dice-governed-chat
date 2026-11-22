@@ -1,10 +1,20 @@
 package example.dice.governed;
 
 import com.embabel.agent.api.common.Ai;
+import com.embabel.agent.spi.support.springai.SpringAiLlmService;
 import com.embabel.common.ai.decision.DecisionService;
+import com.embabel.common.ai.model.LlmOptions;
 import com.embabel.common.ai.model.ServiceSelector;
 import com.embabel.dice.audit.AuditCoverageException;
+import com.embabel.dice.proposition.Proposition;
+import com.embabel.dice.proposition.PropositionStatus;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
+import org.springframework.ai.chat.messages.AssistantMessage;
+import org.springframework.ai.chat.model.ChatResponse;
+import org.springframework.ai.chat.model.Generation;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -12,9 +22,11 @@ import org.springframework.test.context.DynamicPropertySource;
 
 import java.nio.file.Files;
 import java.time.Instant;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
@@ -142,6 +154,167 @@ class WorkflowTests {
         var after = failingWorkflow.state(workspace);
         assertThat(after.claims()).isEqualTo(before.claims());
         assertThat(after.reviews()).containsExactly(pending);
+    }
+
+    @Test
+    void approvalStillWorksWhenTheWorkspaceHasMoreArchivedClaimsThanTheReadBudget() {
+        String workspace = "archived-budget-test";
+        workflow.state(workspace);
+        storage.write(workspace, () -> {
+            for (int index = 0; index < 200; index++) {
+                storage.facts().save(Proposition.draft(workspace, "Archived note " + index, 0.9)
+                        .withStatus(PropositionStatus.SUPERSEDED).toProposition());
+            }
+            return null;
+        });
+
+        workflow.tell(workspace, "reported-policy", "Support leads can approve refunds within 60 days.");
+        var approved = workflow.approve(workspace, reviewFrom(workspace, "reported-policy").id());
+
+        assertThat(approved.claims()).singleElement().satisfies(claim -> {
+            assertThat(claim.text()).contains("60 days");
+            assertThat(claim.pinned()).isTrue();
+        });
+    }
+
+    @Test
+    void aMentionlessRefundWindowChallengeCannotEnterAcceptedMemory() {
+        String workspace = "mentionless-policy-test";
+        String text = "The refund window is two months.";
+        var before = workflow.state(workspace);
+
+        extractingWithoutMentions(text).tell(workspace, "refund-window", text);
+
+        var disputed = workflow.state(workspace);
+        assertThat(disputed.claims()).isEqualTo(before.claims());
+        assertThat(disputed.reviews()).singleElement().satisfies(review -> {
+            assertThat(review.text()).isEqualTo(text);
+            assertThat(review.reason()).contains("approved refund policy");
+            assertThat(review.approvable()).isTrue();
+        });
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "The customer requested a refund two days ago.",
+            "Alice requested a refund on May 3.",
+            "Alice requested a refund on June 3.",
+            "Alice requested a full refund yesterday.",
+            "Alice received a partial refund yesterday.",
+            "Alice requested two refunds yesterday.",
+            "A refund was approved yesterday.",
+            "Alice requested a refund."
+    })
+    void aRefundServiceEventIsOrdinaryMemoryEvenWhenItMentionsDates(String text) {
+        String workspace = "refund-service-test-" + text.hashCode();
+
+        extractingWithoutMentions(text).tell(workspace, "refund-service-event", text);
+
+        var state = workflow.state(workspace);
+        assertThat(state.claims()).filteredOn(claim -> !claim.pinned())
+                .extracting(Workflow.Claim::text).containsExactly(text);
+        assertThat(state.reviews()).isEmpty();
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "Support leads are authorized to approve refunds within 60 days.",
+            "Support leads may now approve refunds within 60 days.",
+            "Refunds must be approved by support leads within 60 days.",
+            "Refunds are approved within 60 days.",
+            "Customers are eligible for refunds within 60 days.",
+            "Support leads can approve refunds within 60 days for all customers.",
+            "The refund window is 60 days, effective on Monday.",
+            "The refund window is open for 60 days.",
+            "Support leads are authorized to approve refunds for up to 60 days after purchase."
+    })
+    void knownAuthorityPhrasingIdentifiesAProposedRefundPolicyWithoutTags(String text) {
+        String workspace = "refund-authority-test" + text.hashCode();
+        var before = workflow.state(workspace);
+
+        extractingWithoutMentions(text).tell(workspace, "policy-authority", text);
+
+        var after = workflow.state(workspace);
+        assertThat(after.claims()).isEqualTo(before.claims());
+        assertThat(after.reviews()).singleElement().satisfies(review -> {
+            assertThat(review.text()).isEqualTo(text);
+            assertThat(review.approvable()).isTrue();
+        });
+    }
+
+    @ParameterizedTest
+    @CsvSource(delimiter = '|', value = {
+            "Alice can request a refund until Friday.|true",
+            "Alice can request a refund until Friday.|false",
+            "Alice's refund window expires Friday.|false",
+            "Her refund deadline is Friday.|false",
+            "Support leads can approve refunds within 60 days for Alice.|false",
+            "Refunds are available until Friday to Alice.|false",
+            "The board approved a refund policy extending the window to 60 days.|false",
+            "The refund policy covers anyone who requested a refund within 60 days.|false",
+            "Anyone who requested a refund within 60 days receives their money back.|false",
+            "Every customer is automatically approved a refund.|false",
+            "No customer is approved a refund.|false",
+            "Customers are always approved refunds.|false",
+            "Alice is approved a refund.|false",
+            "Customers Are Issued Refunds.|false",
+            "Customers Are Denied Refunds.|false",
+            "Alice Is Denied A Refund.|false",
+            "Approved Customers Are Issued Refunds.|false"
+    })
+    void claimsWithUnclearRefundScopeCannotReplaceTheWorkspacePolicy(String text, boolean misclassified) {
+        String workspace = "individual-refund-test-" + text.hashCode() + "-" + misclassified;
+        var before = workflow.state(workspace);
+        String mentions = misclassified
+                ? "[{\"span\":\"a refund\",\"type\":\"RefundPolicy\",\"role\":\"OBJECT\"}]" : "[]";
+
+        extracting(text, mentions).tell(workspace, "customer-entitlement", text);
+
+        var after = workflow.state(workspace);
+        assertThat(after.claims()).isEqualTo(before.claims());
+        assertThat(after.reviews()).singleElement().satisfies(review -> {
+            assertThat(review.text()).isEqualTo(text);
+            assertThat(review.approvable()).isFalse();
+            assertThatThrownBy(() -> workflow.approve(workspace, review.id()))
+                    .isInstanceOf(Workflow.RequestConflict.class);
+        });
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    void aMissingComparisonIdentityOnEitherSideDoesNotBypassDecision(boolean missingOnIncoming) {
+        String workspace = "comparison-identity-test-" + missingOnIncoming;
+        var email = "Email is our preferred follow-up channel.";
+        var phone = "Phone is our preferred follow-up channel.";
+        var first = missingOnIncoming ? workflow : extractingWithoutMentions(email);
+        var second = missingOnIncoming ? extractingWithoutMentions(phone) : workflow;
+        first.tell(workspace, "first-choice", email);
+
+        second.tell(workspace, "second-choice", phone);
+
+        var disputed = workflow.state(workspace);
+        assertThat(disputed.claims()).filteredOn(claim -> !claim.pinned())
+                .extracting(Workflow.Claim::text).containsExactly(email);
+        assertThat(disputed.reviews()).singleElement().satisfies(review -> {
+            assertThat(review.text()).isEqualTo(phone);
+            assertThat(review.reason()).contains("decision found an incompatible value");
+        });
+    }
+
+    private Workflow extractingWithoutMentions(String text) {
+        return extracting(text, "[]");
+    }
+
+    private Workflow extracting(String text, String mentions) {
+        String response = """
+                {"propositions":[{"text":"%s","mentions":%s,"confidence":0.96,"decay":0,
+                "importance":0.7,"reasoning":"Stated in the message."}]}
+                """.formatted(text, mentions);
+        var model = new SpringAiLlmService("untagged-extractor", "test", ignored ->
+                new ChatResponse(List.of(new Generation(new AssistantMessage(response)))));
+        var fixture = spy(ai);
+        doReturn(ai.withLlmService(model)).when(fixture).withLlm(any(LlmOptions.class));
+        return new Workflow(storage, fixture);
     }
 
     private Workflow.Review reviewFrom(String workspace, String sourceId) {

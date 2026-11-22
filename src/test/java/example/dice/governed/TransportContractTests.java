@@ -14,7 +14,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class TransportContractTests {
     @Test
     void theDeskCanOnlyUseItsOwnWorkspaceAndCannotApprove() {
-        var access = new DemoAccess("desk-demo", "reviewer-demo", "beta-demo");
+        var access = new DemoAccess(new DemoAccessProperties("desk-demo", "reviewer-demo", "beta-demo"));
 
         access.require("acme", "Bearer desk-demo", false);
         access.require("acme", "Bearer reviewer-demo", true);

@@ -15,6 +15,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
@@ -121,6 +122,17 @@ class ProgressionTests {
         }
     }
 
+    @Test
+    void configuredDeskTokenReplacesTheDefaultAndKeepsItsPermissions() throws Exception {
+        try (var app = start("--governed.demo.desk-token=custom-desk")) {
+            app.json("GET", "acme/state", "custom-desk", null, 200);
+            app.json("GET", "acme/state", DESK, null, 404);
+            app.json("GET", "acme/state", REVIEWER, null, 200);
+            app.json("GET", "beta/state", BETA, null, 200);
+            app.json("POST", "acme/reviews/unavailable/approve", "custom-desk", null, 403);
+        }
+    }
+
     private static List<String> claims(JsonNode state, boolean pinned) {
         return StreamSupport.stream(state.path("claims").spliterator(), false)
                 .filter(claim -> claim.path("pinned").asBoolean() == pinned)
@@ -128,10 +140,12 @@ class ProgressionTests {
                 .toList();
     }
 
-    private RunningApp start() {
-        var context = new SpringApplicationBuilder(Application.class).run(
+    private RunningApp start(String... overrides) {
+        var args = new ArrayList<>(List.of(
                 "--server.port=0", "--governed.store.path=" + folder.resolve("chat.db"),
-                "--spring.main.banner-mode=off", "--logging.level.root=WARN");
+                "--spring.main.banner-mode=off", "--logging.level.root=WARN"));
+        args.addAll(List.of(overrides));
+        var context = new SpringApplicationBuilder(Application.class).run(args.toArray(String[]::new));
         var port = ((WebServerApplicationContext) context).getWebServer().getPort();
         return new RunningApp(context, port);
     }

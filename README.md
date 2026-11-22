@@ -91,7 +91,7 @@ Keep the transaction boundary when adapting the workflow.
 
 Replace the example auth and refund rules with your application’s policy.
 
-- **Identity.** The server maps each demo token to a fixed workspace and role. The application checks workspace membership and reviewer permissions. Integrate your identity provider and workspace membership rules before exposing an adapted application.
+- **Identity.** The server maps each demo token to a fixed workspace and role. [DemoAccessProperties](src/main/java/example/dice/governed/DemoAccessProperties.java) binds the server keys under `governed.demo`. The bundled browser uses the default desk and reviewer tokens. The application checks workspace membership and reviewer permissions. Integrate your identity provider and workspace membership rules before exposing an adapted application.
 - **Refund classifier.** The refund workflow checks the full extracted claim for one supported workspace-wide rule, such as “The refund window is 60 days.” A recognized change can replace the pinned rule after review. A customer-specific exception or unsupported wording stays pending for clarification. A recognizable completed event, such as “Alice received a partial refund yesterday,” enters ordinary memory. Replace it with rules for your own domain.
 
 For ordinary claims the app asks `DecisionService` through a model role to classify the claim against candidates from the same workspace. If the decision cannot identify a safe change, the proposal remains available for inspection and approval is disabled. Use the source panel on a current proposition or pending review to open its original message.

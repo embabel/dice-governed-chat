@@ -1,6 +1,5 @@
 package example.dice.governed;
 
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 import org.springframework.web.server.ResponseStatusException;
@@ -12,9 +11,10 @@ final class DemoAccess {
     private final String reviewer;
     private final String beta;
 
-    DemoAccess(@Value("${governed.demo.desk-token:desk-demo}") String desk,
-               @Value("${governed.demo.reviewer-token:reviewer-demo}") String reviewer,
-               @Value("${governed.demo.beta-token:beta-demo}") String beta) {
+    DemoAccess(DemoAccessProperties properties) {
+        var desk = properties.deskToken();
+        var reviewer = properties.reviewerToken();
+        var beta = properties.betaToken();
         if (desk.isBlank() || reviewer.isBlank() || beta.isBlank()
                 || desk.equals(reviewer) || desk.equals(beta) || reviewer.equals(beta)) {
             throw new IllegalArgumentException("Demo persona keys must be distinct and nonempty");

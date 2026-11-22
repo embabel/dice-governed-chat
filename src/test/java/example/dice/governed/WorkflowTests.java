@@ -23,6 +23,10 @@ import org.springframework.test.context.DynamicPropertySource;
 import java.nio.file.Files;
 import java.time.Instant;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -81,6 +85,62 @@ class WorkflowTests {
                 .extracting(Workflow.Claim::text).containsExactly(before.claims().getFirst().text());
         assertThatThrownBy(() -> workflow.history("policy-test", Instant.EPOCH))
                 .isInstanceOf(AuditCoverageException.class);
+    }
+
+    @Test
+    void approvalCanCommitWhileExtractionWaitsAndAStaleTurnCanBeRetried() throws Exception {
+        var workspace = "approval-during-extraction";
+        workflow.tell(workspace, "review", "Support leads can approve refunds within 60 days.");
+        var pending = reviewFrom(workspace, "review");
+        var extracting = new CountDownLatch(1);
+        var resume = new CountDownLatch(1);
+        var delayed = extracting("Email is our preferred follow-up channel.", "[]", () -> {
+            extracting.countDown();
+            try {
+                if (!resume.await(10, TimeUnit.SECONDS)) {
+                    throw new IllegalStateException("Test did not release the model call");
+                }
+            } catch (InterruptedException failure) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException(failure);
+            }
+        });
+
+        try (var workers = Executors.newVirtualThreadPerTaskExecutor()) {
+            var turn = workers.submit(() -> delayed.tell(workspace, "waiting-message",
+                    "Email is our preferred follow-up channel."));
+            try {
+                assertThat(extracting.await(5, TimeUnit.SECONDS)).isTrue();
+                var approval = workers.submit(() -> delayed.approve(workspace, pending.id()));
+                assertThat(approval.get(3, TimeUnit.SECONDS).claims()).extracting(Workflow.Claim::text)
+                        .containsExactly("Support leads can approve refunds within 60 days.");
+            } finally {
+                resume.countDown();
+            }
+            assertThatThrownBy(() -> turn.get(5, TimeUnit.SECONDS))
+                    .isInstanceOf(ExecutionException.class).hasCauseInstanceOf(Workflow.RequestConflict.class);
+        }
+        assertThat(storage.source(workspace, "waiting-message")).isEmpty();
+        workflow.tell(workspace, "waiting-message", "Email is our preferred follow-up channel.");
+        assertThat(workflow.state(workspace).claims()).extracting(Workflow.Claim::text)
+                .contains("Email is our preferred follow-up channel.");
+    }
+
+    @Test
+    void aReviewCannotApproveAgainstAChangedContentRevision() {
+        var workspace = "review-content-revision";
+        workflow.tell(workspace, "proposal", "Support leads can approve refunds within 60 days.");
+        var disputed = workflow.state(workspace);
+        var current = storage.facts().findById(disputed.claims().getFirst().id());
+        var revised = current.withConfidence(0.95);
+        assertThat(revised.getContentRevised()).isAfter(current.getContentRevised());
+        assertThat(revised.getMetadataRevised()).isEqualTo(current.getMetadataRevised());
+        storage.facts().save(revised);
+
+        assertThatThrownBy(() -> workflow.approve(workspace, disputed.reviews().getFirst().id()))
+                .isInstanceOf(Workflow.RequestConflict.class);
+        assertThat(workflow.state(workspace).reviews()).singleElement()
+                .satisfies(review -> assertThat(review.approvable()).isFalse());
     }
 
     @Test
@@ -306,12 +366,18 @@ class WorkflowTests {
     }
 
     private Workflow extracting(String text, String mentions) {
+        return extracting(text, mentions, () -> {});
+    }
+
+    private Workflow extracting(String text, String mentions, Runnable beforeReply) {
         String response = """
                 {"propositions":[{"text":"%s","mentions":%s,"confidence":0.96,"decay":0,
                 "importance":0.7,"reasoning":"Stated in the message."}]}
                 """.formatted(text, mentions);
-        var model = new SpringAiLlmService("untagged-extractor", "test", ignored ->
-                new ChatResponse(List.of(new Generation(new AssistantMessage(response)))));
+        var model = new SpringAiLlmService("untagged-extractor", "test", ignored -> {
+            beforeReply.run();
+            return new ChatResponse(List.of(new Generation(new AssistantMessage(response))));
+        });
         var fixture = spy(ai);
         doReturn(ai.withLlmService(model)).when(fixture).withLlm(any(LlmOptions.class));
         return new Workflow(storage, fixture);

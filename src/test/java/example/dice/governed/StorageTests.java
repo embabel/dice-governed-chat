@@ -8,7 +8,6 @@ import com.embabel.common.ai.decision.Questions;
 import com.embabel.common.ai.model.LlmOptions;
 import com.embabel.dice.audit.AuditCoverageException;
 import com.embabel.dice.common.SourceAnalysisContext;
-import com.embabel.dice.common.resolver.EscalatingEntityResolver;
 import com.embabel.dice.pipeline.PropositionPipeline;
 import com.embabel.dice.proposition.Proposition;
 import com.embabel.dice.proposition.PropositionStatus;
@@ -110,9 +109,8 @@ class StorageTests {
             var ai = application.getBean(Ai.class);
             var extractor = LlmPropositionExtractor.builder(LlmOptions.withDefaultLlm()).withAi(ai);
             var pipeline = PropositionPipeline.withExtractor(extractor);
-            var entities = application.getBean(Storage.class).entities("support");
             var context = SourceAnalysisContext.withContextId("support")
-                    .withEntityResolver(EscalatingEntityResolver.withoutVector(entities))
+                    .withEntityResolver(Workflow.MENTIONS_ONLY)
                     .withSchema(DataDictionary.fromClasses("support", ContactPreference.class));
             var result = pipeline.processText("Email is our preferred follow-up channel.", "source-1", context);
             assertThat(result.getPropositions()).extracting(Proposition::getText)

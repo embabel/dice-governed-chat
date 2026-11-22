@@ -5,10 +5,11 @@ import com.embabel.agent.core.DataDictionary;
 import com.embabel.common.ai.model.LlmOptions;
 import com.embabel.dice.agent.ContextBudget;
 import com.embabel.dice.audit.AuditEventListener;
+import com.embabel.dice.common.EntityResolver;
 import com.embabel.dice.common.PropositionRejected;
 import com.embabel.dice.common.PropositionRoutedToReview;
+import com.embabel.dice.common.Resolutions;
 import com.embabel.dice.common.SourceAnalysisContext;
-import com.embabel.dice.common.resolver.EscalatingEntityResolver;
 import com.embabel.dice.pipeline.ChunkPropositionResult;
 import com.embabel.dice.pipeline.PropositionPipeline;
 import com.embabel.dice.proposition.EntityMention;
@@ -16,9 +17,6 @@ import com.embabel.dice.proposition.MentionRole;
 import com.embabel.dice.proposition.Proposition;
 import com.embabel.dice.proposition.PropositionStatus;
 import com.embabel.dice.proposition.extraction.LlmPropositionExtractor;
-import com.embabel.dice.proposition.gate.ConfidenceGate;
-import com.embabel.dice.proposition.gate.GateContext;
-import com.embabel.dice.proposition.gate.GateDecision;
 import com.embabel.dice.provenance.ConnectorRef;
 import com.embabel.dice.store.ContextReadScope;
 import com.embabel.dice.store.ReadBudget;
@@ -26,6 +24,8 @@ import com.embabel.dice.store.ReadCriteria;
 import com.embabel.dice.store.ReadQuery;
 import com.embabel.dice.store.ScopedReadSpec;
 import com.embabel.dice.temporal.TemporalMetadata;
+import example.dice.governed.AdmissionPolicy.Admission;
+import example.dice.governed.AdmissionPolicy.Disposition;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -35,12 +35,9 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
-import java.util.regex.Pattern;
-import java.util.stream.IntStream;
 
 @Service
 final class Workflow {
@@ -50,113 +47,61 @@ final class Workflow {
     private static final String SEED_POLICY = "Support leads can approve refunds within 30 days.";
     private static final String TARGET = "governed.review.target";
     private static final String TARGET_REVISION = "governed.review.target-revision";
-    private static final String POLICY_CHANGE = "A change to the approved refund policy needs review.";
-    private static final String POLICY_TERMS = "(?:policy|window|deadline|eligibility|period|time limit|rules?)";
-    private static final String REFUND_TOPIC =
-            "(?:refunds?\\s+" + POLICY_TERMS + "|" + POLICY_TERMS + "\\s+(?:for|on)\\s+refunds?)";
-    private static final String NUMBER = "(?:[0-9]+|one|two|three|four|five|six|seven|eight|nine|ten|twelve)";
-    private static final String DURATION = NUMBER + "\\s+(?:hours?|days?|weeks?|months?|years?)";
-    private static final String WEEKDAY = "(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)";
-    private static final String POLICY_DATE = "(?:" + WEEKDAY + "|[0-9]{4}-[0-9]{2}-[0-9]{2})";
-    private static final String REFUND_TIMING =
-            "\\s+(?:(?:within|for(?:\\s+up\\s+to)?)\\s+" + DURATION
-                    + "(?:\\s+after\\s+(?:purchase|delivery))?|(?:until|through)\\s+" + POLICY_DATE + ")";
-    private static final String WORKSPACE_POLICY_END =
-            "(?:\\s+for\\s+(?:all|every|any)\\s+(?:customers?|accounts?|orders?|purchases?))?"
-                    + "(?:,?\\s+effective\\s+on\\s+" + POLICY_DATE + ")?[.!]?\\s*";
-    private static final Pattern POLICY_TOPIC = Pattern.compile(
-            "\\s*(?:(?:the|our|company|workspace)\\s+)?" + REFUND_TOPIC
-                    + "(?:\\s*[:=]\\s*|\\s+(?:is|are|ends?|lasts?|expires?)\\s+)"
-                    + "(?:" + DURATION + "|" + POLICY_DATE + "|(?:open|active)" + REFUND_TIMING + ")"
-                    + WORKSPACE_POLICY_END,
-            Pattern.CASE_INSENSITIVE);
-    private static final Pattern POLICY_REFERENCE = Pattern.compile("\\b" + REFUND_TOPIC + "\\b", Pattern.CASE_INSENSITIVE);
-    private static final String APPROVAL_ROLES = "(?:support leads?|team leads?|supervisors?|managers?|administrators?)";
-    private static final String MODIFIERS = "(?:(?:only|now|not)\\s+)*";
-    private static final Pattern ROLE_AUTHORITY = Pattern.compile(
-            "\\s*(?:only\\s+)?(?:the\\s+)?" + APPROVAL_ROLES + "\\s+(?:(?:can|cannot|may|must|should)\\s+" + MODIFIERS
-                    + "|(?:is|are)\\s+" + MODIFIERS + "(?:authorized|allowed|required|permitted)\\s+to\\s+)"
-                    + "(?:approve|authorize|issue|process)\\s+(?:an?\\s+)?refunds?"
-                    + "(?:" + REFUND_TIMING + ")?" + WORKSPACE_POLICY_END,
-            Pattern.CASE_INSENSITIVE);
-    private static final Pattern GENERAL_REFUND_RULE = Pattern.compile(
-            "\\s*(?:refunds\\s+(?:(?:can|cannot|may|must|should)\\s+" + MODIFIERS + "be|are)\\s+" + MODIFIERS
-                    + "(?:approved|issued|processed|requested|available|allowed)(?:\\s+by\\s+" + APPROVAL_ROLES + ")?"
-                    + "|customers\\s+are\\s+" + MODIFIERS + "eligible\\s+for\\s+refunds)"
-                    + "(?:" + REFUND_TIMING + ")?" + WORKSPACE_POLICY_END,
-            Pattern.CASE_INSENSITIVE);
-    private static final Pattern REFUND = Pattern.compile("\\brefund(?:s|ed|ing)?\\b", Pattern.CASE_INSENSITIVE);
-    private static final String HISTORICAL_ACTIONS = "(?:requested|received|issued|approved|processed|denied|rejected|canceled|cancelled)";
-    private static final String CALENDAR_DATE =
-            "(?:January|February|March|April|May|June|July|August|September|October|November|December)"
-                    + "\\s+[0-9]{1,2}(?:,\\s*[0-9]{4})?";
-    private static final String EVENT_DATE = "(?:\\s+(?:yesterday|today|" + DURATION + "\\s+ago"
-            + "|on\\s+(?:" + POLICY_DATE + "|" + CALENDAR_DATE + ")))?[.!]?\\s*";
-    private static final String SERVICE_ACTOR = "(?:(?:a|an|the)\\s+(?:customer|support agent|support lead)"
-            + "|(?!(?:am|is|are|was|were|be|been|being)\\b)(?-i:[\\p{Lu}][\\p{L}'’\\-]*))";
-    private static final Pattern HISTORICAL_REFUND_ACTION = Pattern.compile(
-            "\\s*(?:" + SERVICE_ACTOR + "\\s+" + HISTORICAL_ACTIONS
-                    + "\\s+(?:(?:a|an|the|their|his|her|" + NUMBER + ")\\s+)?(?:(?:full|partial)\\s+)?refunds?"
-                    + "|(?:(?:a|an|the)\\s+)?(?:(?:full|partial)\\s+)?refunds?\\s+(?:was|were|has been|have been)\\s+"
-                    + HISTORICAL_ACTIONS + ")" + EVENT_DATE,
-            Pattern.CASE_INSENSITIVE);
-    private static final Pattern REFUND_PERMISSION_CUES = Pattern.compile(
-            "\\b(?:can|cannot|might|must|should|authorized|allowed|eligible|entitled|if|unless|whenever)\\b"
-                    + "|\\b(?:every|each|anyone|everyone|always|never)\\b"
-                    + "|\\bmay\\s+(?:only|now|be|have|approve|authorize|issue|process|request|receive)\\b",
-            Pattern.CASE_INSENSITIVE);
+    private static final String TARGET_CONTENT_REVISION = "governed.review.target-content-revision";
     private static final ReadBudget READ_BUDGET = ReadBudget.ofRows(200);
     private static final ContextBudget CONTEXT_BUDGET = ContextBudget.ofTokens(128);
     private static final DataDictionary SCHEMA =
             DataDictionary.fromClasses("support", RefundPolicy.class, ContactPreference.class, Customer.class);
 
+    // This workflow compares grounded mentions. It has no canonical entity catalog.
+    static final EntityResolver MENTIONS_ONLY = (suggestions, schema) ->
+            new Resolutions<>(suggestions.getChunkIds(), List.of());
+
     private final Storage storage;
     private final PropositionPipeline pipeline;
-    private final DecisionRevision decisions;
+    private final AdmissionPolicy policy;
     private final AuditEventListener auditEvents;
-    private final ConfidenceGate confidence = new ConfidenceGate(0.6);
-    private final List<Object> workspaces = IntStream.range(0, 32).mapToObj(unused -> new Object()).toList();
 
     Workflow(Storage storage, Ai ai) {
         this.storage = storage;
         this.pipeline = PropositionPipeline.withExtractor(
                 LlmPropositionExtractor.builder(LlmOptions.withDefaultLlm()).withAi(ai));
-        this.decisions = new DecisionRevision(ai);
+        this.policy = new AdmissionPolicy(new DecisionRevision(ai));
         this.auditEvents = new AuditEventListener(storage.audit());
     }
 
     Turn tell(String workspace, String messageId, String text) {
-        synchronized (lock(workspace)) {
-            var recorded = storage.source(workspace, messageId);
-            if (recorded.isPresent()) {
-                return replay(recorded.orElseThrow(), text);
-            }
-            if (messageId.equals(SEED_SOURCE)) {
-                throw new IllegalArgumentException("This message ID is reserved.");
-            }
-
-            initialize(workspace);
-            var startingClaims = active(workspace);
-            var context = SourceAnalysisContext.withContextId(workspace)
-                    .withEntityResolver(EscalatingEntityResolver.withoutVector(storage.entities(workspace)))
-                    .withSchema(SCHEMA)
-                    .withSourceLocator(new ConnectorRef("governed-chat/" + workspace, messageId));
-            var extracted = extract(text, messageId, context);
-            var admissions = plan(extracted.getPropositions(), startingClaims);
-
-            return storage.write(workspace, () -> {
-                var existingSource = storage.source(workspace, messageId);
-                if (existingSource.isPresent()) {
-                    return replay(existingSource.orElseThrow(), text);
-                }
-                if (!claims(active(workspace)).equals(claims(startingClaims))) {
-                    throw new RequestConflict("The workspace changed during extraction. Please retry the message.");
-                }
-                storage.saveSource(workspace, messageId, text);
-                admissions.forEach(this::apply);
-                return new Turn(reply(workspace, admissions));
-            });
+        var recorded = storage.source(workspace, messageId);
+        if (recorded.isPresent()) {
+            return replay(recorded.orElseThrow(), text);
         }
+        if (messageId.equals(SEED_SOURCE)) {
+            throw new IllegalArgumentException("This message ID is reserved.");
+        }
+
+        var startingClaims = storage.write(workspace, () -> {
+            initialize(workspace);
+            return active(workspace);
+        });
+        var context = SourceAnalysisContext.withContextId(workspace)
+                .withEntityResolver(MENTIONS_ONLY)
+                .withSchema(SCHEMA)
+                .withSourceLocator(new ConnectorRef("governed-chat/" + workspace, messageId));
+        var extracted = extract(text, messageId, context);
+        var admissions = policy.plan(extracted.getPropositions(), startingClaims);
+
+        return storage.write(workspace, () -> {
+            var existingSource = storage.source(workspace, messageId);
+            if (existingSource.isPresent()) {
+                return replay(existingSource.orElseThrow(), text);
+            }
+            if (!revisions(active(workspace)).equals(revisions(startingClaims))) {
+                throw new RequestConflict("The workspace changed during extraction. Please retry the message.");
+            }
+            storage.saveSource(workspace, messageId, text);
+            admissions.forEach(this::apply);
+            return new Turn(reply(workspace, admissions));
+        });
     }
 
     private ChunkPropositionResult extract(String text, String messageId, SourceAnalysisContext context) {
@@ -180,125 +125,67 @@ final class Workflow {
     }
 
     State state(String workspace) {
-        synchronized (lock(workspace)) {
-            return snapshot(workspace, initialize(workspace));
-        }
+        return storage.write(workspace, () -> snapshot(workspace, initialize(workspace)));
     }
 
     State approve(String workspace, String reviewId) {
-        synchronized (lock(workspace)) {
-            return storage.write(workspace, () -> {
-                var pending = storage.pending(workspace).stream()
-                        .filter(review -> review.id().equals(reviewId))
-                        .findFirst().orElseThrow(ReviewUnavailable::new);
-                var proposed = pending.fact();
-                if (!proposed.getMetadata().containsKey(TARGET)) {
-                    throw new RequestConflict("Resolve the comparison before approving this proposal.");
-                }
-                var target = currentTarget(proposed, active(workspace));
-                if (target.isEmpty()) {
-                    throw new RequestConflict("The claim changed after this review was opened.");
-                }
-                var prior = target.orElseThrow();
-                boolean policy = describesPolicy(proposed);
-                if (policy != prior.getPinned()) {
-                    throw new RequestConflict("The approval status changed after this review was opened.");
-                }
-
-                var metadata = new HashMap<>(proposed.getMetadata());
-                metadata.remove(TARGET);
-                metadata.remove(TARGET_REVISION);
-                var confirmed = proposed.toDraft().withMetadata(metadata).toProposition();
-                var sameText = storage.findCanonicalMatch(confirmed);
-                // The store reuses IDs for exact text. Restore an earlier claim through its own ID.
-                var accepted = sameText.map(fact -> fact.absorbEvidence(confirmed)).orElse(confirmed)
-                        .withStatus(PropositionStatus.ACTIVE).withPinned(policy).toDraft();
-                if (sameText.filter(fact -> fact.getId().equals(prior.getId())).isEmpty()) {
-                    storage.facts().save(prior.withPinned(false).withStatus(PropositionStatus.SUPERSEDED));
-                }
-                if (sameText.isEmpty()) {
-                    accepted = accepted.withTemporal(new TemporalMetadata(
-                            null, null, null, null, List.of(prior.getId())));
-                }
-                storage.facts().save(accepted.toProposition());
-                storage.deleteReview(workspace, reviewId);
-                return snapshot(workspace, storage.ensureBaseline(workspace));
-            });
-        }
-    }
-
-    private List<Admission> plan(List<Proposition> incoming, List<Proposition> existing) {
-        var accepted = new LinkedHashMap<String, Proposition>();
-        existing.forEach(fact -> accepted.put(fact.getId(), fact));
-        var admissions = new ArrayList<Admission>();
-        for (var incomingFact : incoming) {
-            var admission = plan(incomingFact, List.copyOf(accepted.values()));
-            admissions.add(admission);
-            if (admission.disposition() == Disposition.ACCEPT || admission.disposition() == Disposition.REINFORCE) {
-                accepted.put(admission.fact().getId(), admission.fact());
-            }
-        }
-        return List.copyOf(admissions);
-    }
-
-    History history(String workspace, Instant asOf) {
-        synchronized (lock(workspace)) {
-            var claims = storage.audit().beliefSetAsOf(workspace, asOf).stream()
-                    .filter(fact -> fact.getStatus() == PropositionStatus.ACTIVE)
-                    .map(fact -> new Claim(fact.getId(), fact.getText(), fact.getPinned(), List.of()))
-                    .toList();
-            return new History(asOf, claims);
-        }
-    }
-
-    private Instant initialize(String workspace) {
         return storage.write(workspace, () -> {
-            var baseline = storage.ensureBaseline(workspace);
-            if (storage.source(workspace, SEED_SOURCE).isEmpty()) {
-                var policy = Proposition.draft(workspace, SEED_POLICY, 1.0)
-                        .withId(scopedId(workspace, SEED_SOURCE))
-                        .withMentions(List.of(new EntityMention("30 days", "RefundPolicy", null, MentionRole.OBJECT)))
-                        .withGrounding(List.of(SEED_SOURCE)).withPinned(true).toProposition();
-                storage.saveSource(workspace, SEED_SOURCE, SEED_POLICY);
-                storage.facts().save(policy);
+            var pending = storage.pending(workspace, reviewId).orElseThrow(ReviewUnavailable::new);
+            var proposed = pending.fact();
+            if (!proposed.getMetadata().containsKey(TARGET)) {
+                throw new RequestConflict("Resolve the comparison before approving this proposal.");
             }
-            return baseline;
+            var target = currentTarget(proposed, active(workspace));
+            if (target.isEmpty()) {
+                throw new RequestConflict("The claim changed after this review was opened.");
+            }
+            var prior = target.orElseThrow();
+            boolean policy = RefundClaims.describesPolicy(proposed);
+            if (policy != prior.getPinned()) {
+                throw new RequestConflict("The approval status changed after this review was opened.");
+            }
+
+            var metadata = new HashMap<>(proposed.getMetadata());
+            metadata.remove(TARGET);
+            metadata.remove(TARGET_REVISION);
+            metadata.remove(TARGET_CONTENT_REVISION);
+            var confirmed = proposed.toDraft().withMetadata(metadata).toProposition();
+            var sameText = storage.findCanonicalMatch(confirmed);
+            // The store reuses IDs for exact text. Restore an earlier claim through its own ID.
+            var accepted = sameText.map(fact -> fact.absorbEvidence(confirmed)).orElse(confirmed)
+                    .withStatus(PropositionStatus.ACTIVE).withPinned(policy).toDraft();
+            if (sameText.filter(fact -> fact.getId().equals(prior.getId())).isEmpty()) {
+                storage.facts().save(prior.withPinned(false).withStatus(PropositionStatus.SUPERSEDED));
+            }
+            if (sameText.isEmpty()) {
+                accepted = accepted.withTemporal(new TemporalMetadata(
+                        null, null, null, null, List.of(prior.getId())));
+            }
+            storage.facts().save(accepted.toProposition());
+            storage.deleteReview(workspace, reviewId);
+            return snapshot(workspace, storage.ensureBaseline(workspace));
         });
     }
 
-    private Admission plan(Proposition fact, List<Proposition> active) {
-        var verdict = confidence.evaluate(fact, new GateContext()).getDecision();
-        if (verdict instanceof GateDecision.Reject rejected) {
-            return new Admission(fact, null, Disposition.REJECT, rejected.getReason());
-        }
-        if (describesPolicy(fact)) {
-            var approved = active.stream().filter(Proposition::getPinned).findFirst().orElseThrow();
-            if (approved.getText().equalsIgnoreCase(fact.getText())) {
-                return new Admission(fact, null, Disposition.UNCHANGED, null);
-            }
-            return new Admission(fact, approved, Disposition.REVIEW, POLICY_CHANGE);
-        }
-        if (refundScopeIsUnclear(fact)) {
-            return new Admission(fact, null, Disposition.REVIEW,
-                    "Clarify whether this refund claim concerns one customer or the workspace policy.");
-        }
-        var candidates = active.stream()
-                .filter(existing -> !existing.getPinned())
-                .filter(existing -> comparable(fact, existing))
+    History history(String workspace, Instant asOf) {
+        var claims = storage.audit().beliefSetAsOf(workspace, asOf).stream()
+                .filter(fact -> fact.getStatus() == PropositionStatus.ACTIVE)
+                .map(fact -> new Claim(fact.getId(), fact.getText(), fact.getPinned(), List.of()))
                 .toList();
-        if (candidates.size() > 12) {
-            return new Admission(fact, null, Disposition.REVIEW,
-                    "There are too many related claims to decide this change automatically.");
+        return new History(asOf, claims);
+    }
+
+    private Instant initialize(String workspace) {
+        var baseline = storage.ensureBaseline(workspace);
+        if (storage.source(workspace, SEED_SOURCE).isEmpty()) {
+            var policy = Proposition.draft(workspace, SEED_POLICY, 1.0)
+                    .withId(scopedId(workspace, SEED_SOURCE))
+                    .withMentions(List.of(new EntityMention("30 days", "RefundPolicy", null, MentionRole.OBJECT)))
+                    .withGrounding(List.of(SEED_SOURCE)).withPinned(true).toProposition();
+            storage.saveSource(workspace, SEED_SOURCE, SEED_POLICY);
+            storage.facts().save(policy);
         }
-        var decision = decisions.classify(fact, candidates);
-        return switch (decision.relation()) {
-            case UNRELATED -> new Admission(fact, null, Disposition.ACCEPT, null);
-            case DUPLICATE, REINFORCES -> new Admission(
-                    decision.candidate().absorbEvidence(fact), null, Disposition.REINFORCE, null);
-            case CONTRADICTS -> new Admission(fact, decision.candidate(), Disposition.REVIEW,
-                    "The revision decision found an incompatible value in accepted memory.");
-            case REVIEW -> new Admission(fact, null, Disposition.REVIEW, decision.reason());
-        };
+        return baseline;
     }
 
     private void apply(Admission admission) {
@@ -311,6 +198,7 @@ final class Workflow {
                 if (admission.previous() != null) {
                     metadata.put(TARGET, admission.previous().getId());
                     metadata.put(TARGET_REVISION, admission.previous().getMetadataRevised().toString());
+                    metadata.put(TARGET_CONTENT_REVISION, admission.previous().getContentRevised().toString());
                 }
                 var proposed = fact.toDraft().withMetadata(metadata).toProposition();
                 storage.saveReview(workspace, proposed.getId(), proposed, admission.reason());
@@ -321,41 +209,6 @@ final class Workflow {
                 // Repeating the current policy does not add authoritative evidence.
             }
         }
-    }
-
-    private boolean comparable(Proposition incoming, Proposition candidate) {
-        var incomingIdentity = incoming.getMentions().stream().filter(this::comparisonMention).toList();
-        var candidateIdentity = candidate.getMentions().stream().filter(this::comparisonMention).toList();
-        // A missed tag is not evidence that the facts are unrelated. Let Decision assess the text.
-        if (incomingIdentity.isEmpty() || candidateIdentity.isEmpty()) {
-            return true;
-        }
-        return incomingIdentity.stream().anyMatch(mention ->
-                candidateIdentity.stream().anyMatch(existing -> mention.getType().equalsIgnoreCase(existing.getType())
-                        && (mention.getType().equalsIgnoreCase("ContactPreference")
-                        || mention.getSpan().equalsIgnoreCase(existing.getSpan()))));
-    }
-
-    private boolean comparisonMention(EntityMention mention) {
-        return !mention.getSpan().isBlank() && (mention.getType().equalsIgnoreCase("ContactPreference")
-                || mention.getType().equalsIgnoreCase("Customer"));
-    }
-
-    private boolean describesPolicy(Proposition fact) {
-        var text = fact.getText();
-        // Approval needs a complete workspace statement. A recognized prefix leaves its scope unknown.
-        return POLICY_TOPIC.matcher(text).matches() || ROLE_AUTHORITY.matcher(text).matches()
-                || GENERAL_REFUND_RULE.matcher(text).matches();
-    }
-
-    private boolean refundScopeIsUnclear(Proposition fact) {
-        var text = fact.getText();
-        boolean refund = REFUND.matcher(text).find() || fact.getMentions().stream()
-                .anyMatch(mention -> mention.getType().equalsIgnoreCase("RefundPolicy"));
-        boolean completed = HISTORICAL_REFUND_ACTION.matcher(text).matches()
-                && !POLICY_REFERENCE.matcher(text).find()
-                && !REFUND_PERMISSION_CUES.matcher(text).find();
-        return refund && !completed;
     }
 
     private String reply(String workspace, List<Admission> admissions) {
@@ -388,8 +241,12 @@ final class Workflow {
     private Optional<Proposition> currentTarget(Proposition proposed, List<Proposition> accepted) {
         var targetId = proposed.getMetadata().get(TARGET);
         var targetRevision = proposed.getMetadata().get(TARGET_REVISION);
+        var contentRevision = proposed.getMetadata().get(TARGET_CONTENT_REVISION);
+        // Reviews written before content revision tracking have only the metadata revision.
         return accepted.stream().filter(fact -> fact.getId().equals(targetId)
-                && fact.getMetadataRevised().toString().equals(targetRevision)).findFirst();
+                && fact.getMetadataRevised().toString().equals(targetRevision)
+                && (contentRevision == null || fact.getContentRevised().toString().equals(contentRevision)))
+                .findFirst();
     }
 
     private List<Proposition> active(String workspace) {
@@ -407,17 +264,16 @@ final class Workflow {
                 fact.getGrounding())).toList();
     }
 
-    private Object lock(String workspace) {
-        return workspaces.get(Math.floorMod(workspace.hashCode(), workspaces.size()));
+    private static List<ClaimRevision> revisions(List<Proposition> facts) {
+        return facts.stream().map(fact -> new ClaimRevision(
+                fact.getId(), fact.getContentRevised(), fact.getMetadataRevised())).toList();
     }
+
+    private record ClaimRevision(String id, Instant content, Instant metadata) {}
 
     private static String scopedId(String workspace, String source) {
         return UUID.nameUUIDFromBytes((workspace + "\u0000" + source).getBytes(StandardCharsets.UTF_8)).toString();
     }
-
-    private enum Disposition { ACCEPT, REINFORCE, REVIEW, REJECT, UNCHANGED }
-
-    private record Admission(Proposition fact, Proposition previous, Disposition disposition, String reason) {}
 
     static final class RequestConflict extends RuntimeException {
         RequestConflict(String message) {

@@ -6,7 +6,7 @@ import com.embabel.dice.storage.DiceStorageSchema;
 import com.embabel.dice.storage.DiceStorageSchemaKt;
 import com.embabel.dice.storage.DrivineAuditLogStore;
 import com.embabel.dice.storage.DrivinePropositionRepository;
-import org.drivine.manager.PersistenceManagerFactory;
+import org.drivine.manager.PersistenceManager;
 import org.drivine.schema.SchemaCatalog;
 import org.drivine.schema.UniquenessConstraintSpec;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -58,12 +58,16 @@ class StorageConfiguration {
     }
 
     @Bean
-    Storage storage(PropositionRepository raw, PersistenceManagerFactory factory,
-                    PlatformTransactionManager transactionManager) {
+    DrivineAuditLogStore auditLog(PersistenceManager manager, PlatformTransactionManager transactions) {
+        return new DrivineAuditLogStore(manager, transactions);
+    }
+
+    @Bean
+    Storage storage(PropositionRepository raw, DrivineAuditLogStore audit, PersistenceManager manager) {
+        // The starter provides the repository. Its canonical lookup follows the same deduplication as save.
         if (!(raw instanceof DrivinePropositionRepository repository)) {
             throw new IllegalStateException("Governed Chat requires the durable DICE SQLite repository");
         }
-        var manager = factory.get(DATABASE);
-        return new Storage(repository, new DrivineAuditLogStore(manager, transactionManager), manager);
+        return new Storage(repository, audit, manager);
     }
 }

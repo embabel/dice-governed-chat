@@ -58,7 +58,8 @@ Try “Email is our preferred follow-up channel.” followed by “Phone is our 
 | Screen extracted claims for sufficient confidence | `ConfidenceGate` |
 | Read active claims within one workspace | `ScopedReads` and `ContextReadScope` |
 | Choose a bounded set of facts and keep the approved policy in it | `ContextBudget` |
-| Record changes and read earlier belief sets | `AuditingPropositionRepository` and `AuditLogSchema` |
+| Register the opt-in audit schema | `AuditLogSchema` |
+| Record proposition changes and read earlier belief sets | `AuditingPropositionRepository` and `DrivineAuditLogStore` |
 
 The SQLite starter configures the persistent proposition store from the datasource in [application.yml](src/main/resources/application.yml). [StorageConfiguration](src/main/java/example/dice/governed/StorageConfiguration.java) registers the opt-in audit schema and uses the starter’s persistence manager and Spring transaction manager. [Storage](src/main/java/example/dice/governed/Storage.java) wraps the starter’s store in `AuditingPropositionRepository`. The demo stores grounded mentions on propositions and uses their types and spans to compare claims.
 

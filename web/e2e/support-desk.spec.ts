@@ -63,11 +63,12 @@ async function mockWorkspace(page: Page) {
   })
 }
 
-async function verifyReviewFlow(page: Page) {
+async function verifyReviewFlow(page: Page, capture?: (state: string) => Promise<unknown>) {
   await page.goto('/')
   const current = page.getByRole('region', { name: 'Current beliefs' })
   const pending = page.getByRole('region', { name: 'Pending review' })
   await expect(current.getByText(initial, { exact: true })).toBeVisible()
+  await capture?.('support-desk')
 
   await page.getByRole('textbox', { name: 'Message support desk' }).fill(proposed)
   await page.getByRole('button', { name: 'Send message' }).click()
@@ -78,17 +79,22 @@ async function verifyReviewFlow(page: Page) {
   await pending.getByRole('button', { name: 'View source' }).click()
   const source = page.getByRole('dialog', { name: 'Source message' })
   await expect(source.getByText(proposed, { exact: true })).toBeVisible()
+  await capture?.('source-evidence')
   await source.getByRole('button', { name: 'Close' }).click()
 
   await page.getByRole('button', { name: 'Reviewer', exact: true }).click()
-  await pending.getByRole('button', { name: 'Approve' }).click()
+  await pending.getByRole('button', { name: 'Approve' }).press('Enter')
   await expect(current.getByText(proposed, { exact: true })).toBeVisible()
   await expect(pending.getByText('No pending changes.')).toBeVisible()
+  const approvalStatus = pending.getByRole('status')
+  await expect(approvalStatus).toHaveText('Change approved.')
+  await expect(approvalStatus).toBeFocused()
 
   const history = page.getByRole('region', { name: 'Earlier beliefs' })
   await page.getByRole('button', { name: 'Before approval' }).click()
   await expect(history.getByText(initial, { exact: true })).toBeVisible()
   await expect(current.getByText(proposed, { exact: true })).toBeVisible()
+  await capture?.('reviewed-history')
 
   await page.getByRole('button', { name: 'At baseline' }).click()
   await expect(history.getByText('No beliefs at this time.')).toBeVisible()
@@ -182,9 +188,17 @@ test('a delayed approval response keeps the newer beliefs from a chat refresh', 
   await expect(current.getByText(email, { exact: true })).toBeVisible({ timeout: 750 })
 })
 
-test('runs the review progression against the real application', async ({ page }) => {
+test('runs the review progression against the real application', async ({ page }, testInfo) => {
   test.skip(process.env.DICE_LIVE_E2E !== '1', 'Requires a fresh running DICE application')
-  await verifyReviewFlow(page)
+  await verifyReviewFlow(page, async (state) => {
+    const desktop = page.viewportSize()
+    await page.screenshot({ path: testInfo.outputPath(`governed-${state}-desktop.png`), fullPage: true })
+    if (desktop) {
+      await page.setViewportSize({ width: 390, height: 844 })
+      await page.screenshot({ path: testInfo.outputPath(`governed-${state}-mobile.png`), fullPage: true })
+      await page.setViewportSize(desktop)
+    }
+  })
 
   await page.getByRole('button', { name: 'Support desk', exact: true }).click()
   const current = page.getByRole('region', { name: 'Current beliefs' })

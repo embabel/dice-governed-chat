@@ -12,13 +12,14 @@ export function Chat({ refresh }: { refresh: () => void }) {
   const [draft, setDraft] = useState('')
   const [error, setError] = useState('')
   const busy = useRef(false)
-  const messagesEnd = useRef<HTMLDivElement>(null)
+  const transcript = useRef<HTMLDivElement>(null)
   const messages = agent.messages.filter(
     (message) => (message.role === 'assistant' || message.role === 'user') && typeof message.content === 'string',
   )
 
   useEffect(() => {
-    messagesEnd.current?.scrollIntoView({ block: 'nearest' })
+    const log = transcript.current
+    if (log && messages.length > 0) log.scrollTop = log.scrollHeight
   }, [messages.length])
 
   async function send(event: FormEvent<HTMLFormElement>) {
@@ -41,12 +42,12 @@ export function Chat({ refresh }: { refresh: () => void }) {
   }
 
   return (
-    <section className="card chat" aria-labelledby="conversation-heading">
+    <section className="card chat" id="conversation" aria-labelledby="conversation-heading">
       <div className="card-header">
         <h2 id="conversation-heading">Conversation</h2>
         <span className="muted">Acme support</span>
       </div>
-      <div className="transcript" role="log" aria-label="Conversation messages">
+      <div className="transcript" ref={transcript} role="log" aria-label="Conversation messages">
         {messages.length === 0 && (
           <div className="chat-empty">
             <p>Report a change to Acme’s refund policy or follow-up preference.</p>
@@ -61,7 +62,6 @@ export function Chat({ refresh }: { refresh: () => void }) {
             <p>{message.content as string}</p>
           </article>
         ))}
-        <div ref={messagesEnd} />
       </div>
       <form className="composer" onSubmit={send}>
         <label htmlFor="message">Message support desk</label>

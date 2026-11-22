@@ -9,9 +9,17 @@ export function DeskWorkspace({ session }: { session: Session }) {
   const [revision, setRevision] = useState(0)
   const [loadError, setLoadError] = useState('')
   const [approvalError, setApprovalError] = useState('')
+  const [approvalMessage, setApprovalMessage] = useState('')
   const [approving, setApproving] = useState<string>()
   const [beforeApproval, setBeforeApproval] = useState<string>()
   const [sourceId, setSourceId] = useState<string>()
+  const approvalStatus = useRef<HTMLParagraphElement>(null)
+  const restoreApprovalFocus = useRef(false)
+
+  useEffect(() => {
+    if (approvalMessage && restoreApprovalFocus.current) approvalStatus.current?.focus()
+    restoreApprovalFocus.current = false
+  }, [approvalMessage])
 
   useEffect(() => {
     const controller = new AbortController()
@@ -31,12 +39,18 @@ export function DeskWorkspace({ session }: { session: Session }) {
   }
 
   async function approve(id: string) {
+    if (approving !== undefined) return
+    const initiatingControl = document.activeElement
     setApprovalError('')
+    setApprovalMessage('')
     setApproving(id)
     const previousObservation = workspace?.observedAt
     try {
-      updateWorkspace(await request<Workspace>(session, `/reviews/${encodeURIComponent(id)}/approve`, { method: 'POST' }))
+      const approved = await request<Workspace>(session, `/reviews/${encodeURIComponent(id)}/approve`, { method: 'POST' })
+      restoreApprovalFocus.current = document.activeElement === initiatingControl
+      updateWorkspace(approved)
       setBeforeApproval(previousObservation)
+      setApprovalMessage('Change approved.')
     } catch (failure) {
       setApprovalError(failure instanceof WorkspaceError && failure.status === 403
         ? 'This session cannot approve changes.'
@@ -54,30 +68,40 @@ export function DeskWorkspace({ session }: { session: Session }) {
         <p>Review what the assistant remembers about refunds and follow-up.</p>
       </div>
 
+      <nav className="workspace-jumps" aria-label="Workspace sections">
+        <a href="#conversation">Conversation</a>
+        <a href="#current">Current beliefs</a>
+        <a href="#pending">Pending review{workspace && workspace.reviews.length > 0 && <span aria-hidden="true">{workspace.reviews.length}</span>}</a>
+        {workspace && <a href="#earlier">Earlier beliefs</a>}
+      </nav>
+
       <div className="workspace-grid">
         <Chat refresh={refresh} />
 
-        <aside className="inspection" aria-label="Workspace memory">
+        <aside className="card inspection" aria-label="Workspace memory">
           {loadError && (
             <div className="failure">
               <p className="error" role="alert">{loadError}</p>
               <button type="button" className="quiet" onClick={refresh}>Retry</button>
             </div>
           )}
-          <section className="card" aria-labelledby="current-heading">
+          <section className="inspection-section" id="current" aria-labelledby="current-heading">
             <div className="card-header">
               <h2 id="current-heading">Current beliefs</h2>
-              {workspace && <span className="muted">Acme</span>}
             </div>
             {workspace
               ? <ClaimList claims={workspace.claims} onSource={setSourceId} />
               : <p className="empty">{loadError ? 'Workspace unavailable.' : 'Loading workspace…'}</p>}
           </section>
 
-          <section className="card" aria-labelledby="review-heading">
+          <section className="inspection-section" id="pending" aria-labelledby="review-heading">
             <div className="card-header">
               <h2 id="review-heading">Pending review</h2>
-              {workspace && <span className="count" aria-label={`${workspace.reviews.length} pending`}>{workspace.reviews.length}</span>}
+              {workspace && (
+                <span className="count" data-open={workspace.reviews.length > 0} aria-label={`${workspace.reviews.length} pending`}>
+                  {workspace.reviews.length}
+                </span>
+              )}
             </div>
             {workspace?.reviews.length === 0 && <p className="empty">No pending changes.</p>}
             {workspace?.reviews.map((review) => (
@@ -87,13 +111,16 @@ export function DeskWorkspace({ session }: { session: Session }) {
                 <div className="review-actions">
                   <button type="button" className="quiet" onClick={() => setSourceId(review.sourceId)}>View source</button>
                   {session === 'reviewer' && review.approvable !== false && (
-                    <button className="secondary" type="button" disabled={approving !== undefined} onClick={() => approve(review.id)}>
+                    <button className="secondary" type="button" aria-disabled={approving !== undefined} onClick={() => approve(review.id)}>
                       {approving === review.id ? 'Approving…' : 'Approve'}
                     </button>
                   )}
                 </div>
               </article>
             ))}
+            <p className="panel-message approval-status" role="status" ref={approvalStatus} tabIndex={-1}>
+              {approvalMessage}
+            </p>
             {approvalError && <p className="error panel-message" role="alert">{approvalError}</p>}
           </section>
 
@@ -111,7 +138,7 @@ function ClaimList({ claims, onSource }: { claims: Claim[]; onSource?: (id: stri
   return (
     <ul className="claims">
       {claims.map((claim) => (
-        <li key={claim.id}>
+        <li key={claim.id} data-protected={claim.pinned}>
           <p className="claim-text">{claim.text}</p>
           {(claim.pinned || (onSource && claim.sources.length > 0)) && (
             <div className="claim-meta">
@@ -166,7 +193,7 @@ function BeliefHistory({ session, baseline, beforeApproval }: {
   }
 
   return (
-    <section className="card" aria-labelledby="history-heading">
+    <section className="inspection-section" id="earlier" aria-labelledby="history-heading">
       <div className="card-header"><h2 id="history-heading">Earlier beliefs</h2></div>
       <div className="history-controls">
         <div className="coverage">

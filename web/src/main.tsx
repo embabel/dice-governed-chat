@@ -18,8 +18,11 @@ function App() {
       <header className="topbar">
         <div className="topbar-content">
           <div className="identity">
-            <span className="brand" aria-label="DICE">DICE</span>
-            <span className="brand-divider" />
+            <span className="brand">
+              <span className="brand-mark" aria-hidden="true"><i /><i /><i /><i /></span>
+              DICE
+            </span>
+            <span className="brand-divider" aria-hidden="true" />
             <span className="workspace-name">Acme workspace</span>
           </div>
           <div className="session-switch" role="group" aria-label="Demo session">

@@ -9,9 +9,17 @@ export function DeskWorkspace({ session }: { session: Session }) {
   const [revision, setRevision] = useState(0)
   const [loadError, setLoadError] = useState('')
   const [approvalError, setApprovalError] = useState('')
+  const [approvalMessage, setApprovalMessage] = useState('')
   const [approving, setApproving] = useState<string>()
   const [beforeApproval, setBeforeApproval] = useState<string>()
   const [sourceId, setSourceId] = useState<string>()
+  const approvalStatus = useRef<HTMLParagraphElement>(null)
+  const restoreApprovalFocus = useRef(false)
+
+  useEffect(() => {
+    if (approvalMessage && restoreApprovalFocus.current) approvalStatus.current?.focus()
+    restoreApprovalFocus.current = false
+  }, [approvalMessage])
 
   useEffect(() => {
     const controller = new AbortController()
@@ -31,12 +39,18 @@ export function DeskWorkspace({ session }: { session: Session }) {
   }
 
   async function approve(id: string) {
+    if (approving !== undefined) return
+    const initiatingControl = document.activeElement
     setApprovalError('')
+    setApprovalMessage('')
     setApproving(id)
     const previousObservation = workspace?.observedAt
     try {
-      updateWorkspace(await request<Workspace>(session, `/reviews/${encodeURIComponent(id)}/approve`, { method: 'POST' }))
+      const approved = await request<Workspace>(session, `/reviews/${encodeURIComponent(id)}/approve`, { method: 'POST' })
+      restoreApprovalFocus.current = document.activeElement === initiatingControl
+      updateWorkspace(approved)
       setBeforeApproval(previousObservation)
+      setApprovalMessage('Change approved.')
     } catch (failure) {
       setApprovalError(failure instanceof WorkspaceError && failure.status === 403
         ? 'This session cannot approve changes.'
@@ -97,13 +111,16 @@ export function DeskWorkspace({ session }: { session: Session }) {
                 <div className="review-actions">
                   <button type="button" className="quiet" onClick={() => setSourceId(review.sourceId)}>View source</button>
                   {session === 'reviewer' && review.approvable !== false && (
-                    <button className="secondary" type="button" disabled={approving !== undefined} onClick={() => approve(review.id)}>
+                    <button className="secondary" type="button" aria-disabled={approving !== undefined} onClick={() => approve(review.id)}>
                       {approving === review.id ? 'Approving…' : 'Approve'}
                     </button>
                   )}
                 </div>
               </article>
             ))}
+            <p className="panel-message approval-status" role="status" ref={approvalStatus} tabIndex={-1}>
+              {approvalMessage}
+            </p>
             {approvalError && <p className="error panel-message" role="alert">{approvalError}</p>}
           </section>
 

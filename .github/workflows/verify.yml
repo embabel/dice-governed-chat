@@ -30,3 +30,7 @@ jobs:
           bun install --frozen-lockfile
           bunx playwright install --with-deps chromium
       - run: ./scripts/verify
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: governed-chat-screens
+          path: web/test-results/**/governed-*.png

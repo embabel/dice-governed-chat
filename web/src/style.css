@@ -258,6 +258,10 @@ input { min-height: 42px; }
 .failure { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px var(--panel-space); }
 .error { color: var(--danger); font-size: .85rem; line-height: 1.45; margin-top: 8px; }
 .panel-message { padding: 0 var(--panel-space) 14px; }
+.approval-status { color: var(--teal); font-weight: 650; }
+.approval-status:empty { padding: 0; }
+.approval-status:focus-visible { outline: 2px solid var(--focus); outline-offset: -5px; }
+.review-actions button[aria-disabled="true"] { cursor: default; opacity: .65; }
 
 dialog {
   width: min(500px, calc(100% - 32px));

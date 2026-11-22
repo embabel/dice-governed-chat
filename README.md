@@ -4,6 +4,21 @@ A support desk uses DICE to remember approved policy and facts from conversation
 
 The app runs locally with scripted model replies and a file-backed SQLite store. The same chat path can use a live model.
 
+## What you’ll see
+
+The reviewer has approved the 60-day refund window. **Current beliefs** shows the new policy, while **Before approval** still shows 30 days.
+
+![Support desk with an approved 60-day refund policy and the earlier 30-day policy side by side](https://github.com/embabel/dice-governed-chat/releases/download/readme-screenshots/reviewed-history-desktop.png)
+
+[See the source message before approval](https://github.com/embabel/dice-governed-chat/releases/download/readme-screenshots/source-evidence-desktop.png). The support desk can inspect the proposed wording while the 30-day rule is still in force.
+
+<details>
+<summary>Mobile view</summary>
+
+![Mobile support desk with the current policy and the earlier belief view](https://github.com/embabel/dice-governed-chat/releases/download/readme-screenshots/reviewed-history-mobile.png)
+
+</details>
+
 ## Run locally
 
 Use Java 21, Bun, and Node.js 22.12 or later. The server resolves DICE `0.5.0-SNAPSHOT` from the Embabel snapshot repository and Embabel Agent `1.5.4`. The app uses the published DICE snapshot because it needs the scoped store and durable history APIs.

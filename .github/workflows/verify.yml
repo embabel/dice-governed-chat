@@ -36,27 +36,3 @@ jobs:
           name: governed-chat-screens
           path: web/test-results/**/governed-*.png
           if-no-files-found: ignore
-      - name: Export README captures
-        run: |
-          sudo apt-get install -y webp
-          python3 - <<'PY'
-          import base64
-          import pathlib
-          import subprocess
-          import tempfile
-
-          captures = {
-              "governed-ask-desktop.png": "support-chat-desktop.webp",
-              "governed-source-evidence-desktop.png": "source-evidence-desktop.webp",
-              "governed-pending-review-desktop.png": "pending-review-desktop.webp",
-              "governed-reviewed-history-mobile.png": "reviewed-history-mobile.webp",
-          }
-          for source, target in captures.items():
-              image, = pathlib.Path("web/test-results").rglob(source)
-              with tempfile.TemporaryDirectory() as temp:
-                  output = pathlib.Path(temp) / target
-                  subprocess.run(["cwebp", "-quiet", "-q", "82", str(image), "-o", str(output)], check=True)
-                  data = base64.b64encode(output.read_bytes()).decode()
-              for index in range(0, len(data), 12000):
-                  print(f"GOVERNED_CAPTURE {target} {index // 12000} {data[index:index + 12000]}")
-          PY

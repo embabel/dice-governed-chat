@@ -104,7 +104,7 @@ For ordinary claims the app asks `DecisionService` through a model role to class
 Set `OPENAI_API_KEY` and start the server normally to use live OpenAI chat. The app starts in guided mode if the key is absent. To choose guided mode with a key present, set `SPRING_PROFILES_ACTIVE=offline`.
 
 ```sh
-./mvnw -B spring-boot:run
+java -jar target/dice-governed-chat.jar
 ```
 
 The scripted profile uses `data/governed-chat.sqlite`. The live profile uses `data/governed-chat-live.sqlite`. Set `GOVERNED_CHAT_DB` to override the path. Keep provider credentials outside the repository.

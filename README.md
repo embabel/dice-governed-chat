@@ -39,6 +39,12 @@ bun run dev --host 127.0.0.1
 
 Open [the support desk](http://127.0.0.1:5173). The server listens on loopback. To use a different server port, set `DICE_API_URL` when starting Vite.
 
+## Ask the support desk
+
+Ask “How much time does a customer have to request a refund?” Then ask “What does that mean for the support lead?” Chat answers from active claims in the authorized workspace. Pending proposals stay in review until a reviewer approves them. If the workspace cannot answer, the assistant offers a question it can answer from the current record.
+
+The browser sends AG-UI runs to `POST /api/workspaces/{workspace}/chat`. It sets `forwardedProps.intent` to `ask` for questions and `record` for evidence. The ask path reads a scoped snapshot and keeps the conversation as context. It sends no question text through extraction or policy revision. Clients using the original endpoint without an intent continue to submit evidence.
+
 ## Follow a policy change
 
 1. As **Support desk**, enter “Support leads can approve refunds within 60 days.” and select **Record as evidence**. The claim goes to review. The pinned 30-day policy remains current.
@@ -67,7 +73,7 @@ The application owns source messages and pending reviews. Their tables live in t
 
 ## How a write commits
 
-A chat message is handled in two phases.
+A message submitted with **Record as evidence** is handled in two phases.
 
 1. [Workflow](src/main/java/example/dice/governed/Workflow.java) takes a scoped snapshot in a short transaction. Extraction and [AdmissionPolicy](src/main/java/example/dice/governed/AdmissionPolicy.java) then run outside the transaction, including any `DecisionService` call.
 2. Commit through `audit.duringWrite`. Recheck the message ID and the active proposition revisions inside the transaction. Repeating the same ID and text returns an already-processed response. Reusing the ID for different text, or planning from facts that changed in the meantime, returns `409 Conflict`. A successful commit writes the source, reviews, proposition changes and audit records together.
@@ -101,14 +107,14 @@ For ordinary claims the app asks `DecisionService` through a model role to class
 Set `OPENAI_API_KEY` and start the server normally to use live OpenAI chat. The app starts in guided mode if the key is absent. To choose guided mode with a key present, set `SPRING_PROFILES_ACTIVE=offline`.
 
 ```sh
-./mvnw -B spring-boot:run -Dspring-boot.run.profiles=live
+./mvnw -B spring-boot:run
 ```
 
 The scripted profile uses `data/governed-chat.sqlite`. The live profile uses `data/governed-chat-live.sqlite`. Set `GOVERNED_CHAT_DB` to override the path. Keep provider credentials outside the repository.
 
 | Setting | Default in the live profile | Use |
 | --- | --- | --- |
-| `GOVERNED_CHAT_MODEL` | `gpt-4.1-mini` | Extract claims from chat text. |
+| `GOVERNED_CHAT_MODEL` | `gpt-4.1-mini` | Answer questions and extract claims from submitted evidence. |
 | `GOVERNED_CHAT_DECISION_MODEL` | `gpt-4.1-mini` | Answer the typed questions for the `dice-revision` role. |
 | `GOVERNED_CHAT_EMBEDDING_MODEL` | `text-embedding-3-small` | Supply embeddings to the DICE store. |
 

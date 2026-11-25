@@ -12,6 +12,7 @@ import com.embabel.dice.pipeline.PropositionPipeline;
 import com.embabel.dice.proposition.Proposition;
 import com.embabel.dice.proposition.PropositionStatus;
 import com.embabel.dice.proposition.extraction.LlmPropositionExtractor;
+import org.drivine.connection.DatabaseRegistry;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.boot.WebApplicationType;
@@ -132,10 +133,32 @@ class StorageTests {
 
     record ContactPreference(String name) {}
 
-    private ConfigurableApplicationContext start() {
-        return new SpringApplicationBuilder(Application.class)
+    private App start() {
+        var context = new SpringApplicationBuilder(Application.class)
                 .web(WebApplicationType.NONE)
                 .run("--governed.store.path=" + directory.resolve("support.sqlite"));
+        return new App(context);
+    }
+
+    private record App(ConfigurableApplicationContext context) implements AutoCloseable {
+        <T> T getBean(Class<T> type) {
+            return context.getBean(type);
+        }
+
+        @Override
+        public void close() {
+            closeDatabase(context);
+        }
+    }
+
+    static void closeDatabase(ConfigurableApplicationContext context) {
+        var provider = context.getBean(DatabaseRegistry.class).connectionProvider("local");
+        try {
+            context.close();
+        } finally {
+            // Close Drivine's pool before JUnit deletes the SQLite database and its WAL files.
+            provider.end();
+        }
     }
 
     private static Proposition fact(String text) {

@@ -32,7 +32,8 @@ class TransportContractTests {
     void theEventStreamCarriesOneAssistantMessageAndTheUpdatedWorkspace() {
         var mapper = JsonMapper.builder().build();
         var events = new AgUi(mapper).success(
-                new AgUi.Run("chat-1", "run-1", List.of()), "Recorded.\nReady for review.", Map.of("claims", List.of()));
+                new AgUi.Run("chat-1", "run-1", List.of()),
+                new SupportQuestions.Answer("Recorded.\nReady for review.", List.of()), Map.of("claims", List.of()));
         var frames = events.strip().split("\n\n");
         var payloads = java.util.Arrays.stream(frames)
                 .map(frame -> {

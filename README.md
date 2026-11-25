@@ -6,11 +6,13 @@ Ask ordinary questions about the current workspace using **Ask**. Answers use th
 
 ## What you’ll see
 
-The support desk asks about refunds after the reviewer approves a 60-day window. The answer uses the current policy, and **Before approval** still shows the earlier 30-day window.
+The support desk asks about refunds after the reviewer approves a 60-day window. The answer cites the source message. **Before approval** compares both recorded belief sets and shows the 30-day rule that was in force before the change.
 
 ![Support desk answering a free-form refund question from the approval record](docs/screenshots/support-chat-desktop.webp)
 
-[See the source message before approval](docs/screenshots/source-evidence-desktop.webp). The support desk can inspect the proposed wording while the 30-day rule is still in force.
+The review shows the current and proposed wording alongside the [original evidence](docs/screenshots/source-evidence-desktop.webp).
+
+![Reviewer comparing the current 30-day policy with the proposed 60-day change](docs/screenshots/pending-review-desktop.webp)
 
 <details>
 <summary>Mobile view of the policy history</summary>
@@ -23,34 +25,29 @@ The support desk asks about refunds after the reviewer approves a 60-day window.
 
 Use Java 21, Bun, and Node.js 22.12 or later. The server resolves DICE `0.5.0-SNAPSHOT` from the Embabel snapshot repository and Embabel Agent `1.5.4`. The app uses the published DICE snapshot because it needs the scoped store and durable history APIs.
 
-Start the server.
+Build the workbench and its server together.
 
 ```sh
-./mvnw -B spring-boot:run
+./mvnw -B package
+java -jar target/dice-governed-chat.jar
 ```
 
-Start the web app in a second terminal.
+Open [the support desk](http://127.0.0.1:8080). Spring Boot serves the fingerprinted TypeScript bundle and the workspace API from the same loopback address. Use `--server.port` to choose a different port.
 
-```sh
-cd web
-bun install --frozen-lockfile
-bun run dev --host 127.0.0.1
-```
-
-Open [the support desk](http://127.0.0.1:5173). The server listens on loopback. To use a different server port, set `DICE_API_URL` when starting Vite.
+For frontend development, run the server and then start Vite from `web` with `bun run dev --host 127.0.0.1`. The dev server proxies the API to port 8080. Set `DICE_API_URL` if you change the backend port.
 
 ## Ask the support desk
 
 Ask “How much time does a customer have to request a refund?” Then ask “What does that mean for the support lead?” Chat answers from active claims in the authorized workspace. Pending proposals stay in review until a reviewer approves them. If the workspace cannot answer, the assistant offers a question it can answer from the current record.
 
-The browser sends AG-UI runs to `POST /api/workspaces/{workspace}/chat`. It sets `forwardedProps.intent` to `ask` for questions and `record` for evidence. The ask path reads a scoped snapshot and keeps the conversation as context. It sends no question text through extraction or policy revision. Clients using the original endpoint without an intent continue to submit evidence.
+The browser sends AG-UI runs to `POST /api/workspaces/{workspace}/chat`. It sets `forwardedProps.intent` to `ask` for questions and `record` for evidence. The ask path reads a scoped snapshot and keeps the conversation as context. Question text stays out of extraction and policy revision. A `governed.citations` AG-UI event pairs the assistant message with validated claims and their source IDs. Open an **Evidence** button to inspect the original message. Clients using the original endpoint without an intent continue to submit evidence.
 
 ## Follow a policy change
 
 1. As **Support desk**, enter “Support leads can approve refunds within 60 days.” and select **Record as evidence**. The claim goes to review. The pinned 30-day policy remains current.
-2. Open the proposed change's source to read the original message.
+2. Compare the proposal with the current belief. Open **View source** to read the original message.
 3. Switch to **Reviewer** and approve the change. The 60-day policy becomes current. Its source still points to the original support message.
-4. Select **Before approval** in the history view. It shows the earlier policy. A time before the baseline returns unavailable.
+4. Select **Before approval** in **Earlier beliefs**. The comparison shows which beliefs changed. Use **Choose a date and time** to inspect another snapshot. A time before the baseline returns unavailable.
 5. Restart the server with the same database and reopen the support desk. The policy and history remain available.
 
 Record “Email is our preferred follow-up channel.” followed by “Phone is our preferred follow-up channel.” The second claim gives Embabel Decision an existing fact to compare. Protected policy follows the approval workflow.
@@ -69,7 +66,7 @@ Record “Email is our preferred follow-up channel.” followed by “Phone is o
 
 The SQLite starter configures the persistent proposition store from the datasource in [application.yml](src/main/resources/application.yml). [StorageConfiguration](src/main/java/example/dice/governed/StorageConfiguration.java) registers the opt-in audit schema and uses the starter’s persistence manager and Spring transaction manager. [Storage](src/main/java/example/dice/governed/Storage.java) wraps the starter’s store in `AuditingPropositionRepository`. The demo stores grounded mentions on propositions and uses their types and spans to compare claims.
 
-The application owns source messages and pending reviews. Their tables live in the same SQLite database, so one transaction covers app rows and DICE rows. Historical belief sets include the recorded proposition fields.
+The application owns source messages, pending reviews, and recent approval checkpoints. Their tables live in the same SQLite database, so one transaction covers app rows and DICE rows. Historical belief sets include the recorded proposition fields.
 
 ## How a write commits
 
@@ -78,7 +75,7 @@ A message submitted with **Record as evidence** is handled in two phases.
 1. [Workflow](src/main/java/example/dice/governed/Workflow.java) takes a scoped snapshot in a short transaction. Extraction and [AdmissionPolicy](src/main/java/example/dice/governed/AdmissionPolicy.java) then run outside the transaction, including any `DecisionService` call.
 2. Commit through `audit.duringWrite`. Recheck the message ID and the active proposition revisions inside the transaction. Repeating the same ID and text returns an already-processed response. Reusing the ID for different text, or planning from facts that changed in the meantime, returns `409 Conflict`. A successful commit writes the source, reviews, proposition changes and audit records together.
 
-Approval looks up the review by exact workspace and review ID. One transaction checks the target revision, supersedes the prior fact, stores the approved one and retires the review. If any write fails, the whole approval rolls back.
+Approval looks up the review by exact workspace and review ID. One transaction checks the target revision, supersedes the prior fact, stores the approved one, retires the review, and saves before and after timestamps. The comparison reads both belief sets from the DICE audit log. If any write fails, the whole approval rolls back.
 
 The desk reads current beliefs and pending reviews inside the same transaction. Source messages are immutable and fetched separately by workspace and ID. Historical reads require a complete baseline for the workspace. Each workspace records that baseline before it accepts writes. A time before the baseline returns unavailable.
 
@@ -107,7 +104,7 @@ For ordinary claims the app asks `DecisionService` through a model role to class
 Set `OPENAI_API_KEY` and start the server normally to use live OpenAI chat. The app starts in guided mode if the key is absent. To choose guided mode with a key present, set `SPRING_PROFILES_ACTIVE=offline`.
 
 ```sh
-./mvnw -B spring-boot:run
+java -jar target/dice-governed-chat.jar
 ```
 
 The scripted profile uses `data/governed-chat.sqlite`. The live profile uses `data/governed-chat-live.sqlite`. Set `GOVERNED_CHAT_DB` to override the path. Keep provider credentials outside the repository.
@@ -128,4 +125,4 @@ bun install --frozen-lockfile
 bunx playwright install chromium
 ```
 
-Run `./scripts/verify` from the repository root. It builds the server and web app, then starts the packaged server with a temporary database and runs the browser progression. The Java progression test rejects cross-workspace reads, reopens the database with a pending review, and checks the current and earlier policy after approval.
+Run `./scripts/verify` from the repository root. It builds the server and web app, then runs Chromium against the packaged jar with a temporary database. The browser test opens an AG-UI citation, checks the role-gated approval, and reloads the comparison from durable history. The Java progression test rejects cross-workspace reads, reopens the database with a pending review, and checks the current and earlier policy after approval.

@@ -18,6 +18,7 @@ import org.springframework.web.server.ResponseStatusException;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 
 /** Exposes one authorized workspace through REST and AG-UI. */
@@ -46,13 +47,12 @@ final class ChatHttp {
         var message = run.userMessage();
         var reply = run.isQuestion() ? null : workflow.tell(workspace, message.id(), message.content()).reply();
         var snapshot = workflow.state(workspace);
-        if (reply == null) {
-            reply = questions.answer(snapshot, run.conversation());
-        }
+        var answer = reply == null ? questions.answer(snapshot, run.conversation())
+                : new SupportQuestions.Answer(reply, List.of());
         return ResponseEntity.ok()
                 .contentType(MediaType.TEXT_EVENT_STREAM)
                 .header(HttpHeaders.CACHE_CONTROL, "no-store")
-                .body(agUi.success(run, reply, snapshot));
+                .body(agUi.success(run, answer, snapshot));
     }
 
     @GetMapping("/state")

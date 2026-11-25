@@ -6,16 +6,16 @@ Ask ordinary questions about the current workspace using **Ask**. Answers use th
 
 ## What you’ll see
 
-The reviewer has approved the 60-day refund window. **Current beliefs** shows the new policy, while **Before approval** still shows 30 days.
+The support desk asks about refunds after the reviewer approves a 60-day window. The answer uses the current policy, and **Before approval** still shows the earlier 30-day window.
 
-![Support desk with an approved 60-day refund policy and the earlier 30-day policy side by side](https://github.com/embabel/dice-governed-chat/releases/download/readme-screenshots/reviewed-history-desktop.png)
+![Support desk answering a free-form refund question from the approval record](docs/screenshots/support-chat-desktop.webp)
 
-[See the source message before approval](https://github.com/embabel/dice-governed-chat/releases/download/readme-screenshots/source-evidence-desktop.png). The support desk can inspect the proposed wording while the 30-day rule is still in force.
+[See the source message before approval](docs/screenshots/source-evidence-desktop.webp). The support desk can inspect the proposed wording while the 30-day rule is still in force.
 
 <details>
-<summary>Mobile view</summary>
+<summary>Mobile view of the policy history</summary>
 
-![Mobile support desk with the current policy and the earlier belief view](https://github.com/embabel/dice-governed-chat/releases/download/readme-screenshots/reviewed-history-mobile.png)
+![Mobile support desk with the current 60-day policy and the earlier 30-day policy](docs/screenshots/reviewed-history-mobile.webp)
 
 </details>
 

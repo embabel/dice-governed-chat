@@ -237,6 +237,16 @@ test('runs the review progression against the real application', async ({ page }
   const pending = page.getByRole('region', { name: 'Pending review' })
   const message = page.getByRole('textbox', { name: 'Message support desk' })
   const send = page.getByRole('button', { name: 'Record as evidence' })
+  await message.fill('How long does a customer have to request a refund?')
+  await page.getByRole('button', { name: 'Ask', exact: true }).click()
+  await expect(page.getByRole('log', { name: 'Conversation messages' })).toContainText(proposed)
+  await expect(pending.getByText('No pending changes.')).toBeVisible()
+  await page.evaluate(async () => {
+    window.scrollTo(0, 0)
+    await document.fonts.ready
+  })
+  await page.screenshot({ path: testInfo.outputPath('governed-ask-desktop.png'), fullPage: true, animations: 'disabled' })
+
   await message.fill(email)
   await send.click()
   await expect(current.getByText(email, { exact: true })).toBeVisible()

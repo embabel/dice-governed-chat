@@ -145,6 +145,7 @@ final class Workflow {
                 throw new RequestConflict("The approval status changed after this review was opened.");
             }
 
+            var before = Instant.now();
             var metadata = new HashMap<>(proposed.getMetadata());
             metadata.remove(TARGET);
             metadata.remove(TARGET_REVISION);
@@ -161,8 +162,9 @@ final class Workflow {
                 accepted = accepted.withTemporal(new TemporalMetadata(
                         null, null, null, null, List.of(prior.getId())));
             }
-            storage.facts().save(accepted.toProposition());
+            var next = storage.facts().save(accepted.toProposition());
             storage.deleteReview(workspace, reviewId);
+            storage.saveApproval(workspace, reviewId, before, Instant.now(), next.getText());
             return snapshot(workspace, storage.ensureBaseline(workspace));
         });
     }
@@ -231,11 +233,15 @@ final class Workflow {
     private State snapshot(String workspace, Instant baseline) {
         var accepted = active(workspace);
         var reviews = storage.pending(workspace).stream()
-                .map(review -> new Review(review.id(), review.fact().getText(),
-                        review.fact().getGrounding().getFirst(), review.reason(),
-                        currentTarget(review.fact(), accepted).isPresent()))
-                .toList();
-        return new State(baseline, Instant.now(), claims(accepted), reviews);
+                .map(review -> {
+                    var target = currentTarget(review.fact(), accepted);
+                    return new Review(review.id(), review.fact().getText(),
+                            review.fact().getGrounding().getFirst(), review.reason(), target.isPresent(),
+                            target.map(Workflow::claim).orElse(null));
+                }).toList();
+        var approvals = storage.approvals(workspace).stream().map(row -> new Approval(row.id(),
+                Instant.parse(row.prior()), Instant.parse(row.approvedAt()), row.text())).toList();
+        return new State(baseline, Instant.now(), claims(accepted), reviews, approvals);
     }
 
     private Optional<Proposition> currentTarget(Proposition proposed, List<Proposition> accepted) {
@@ -260,8 +266,11 @@ final class Workflow {
     }
 
     private List<Claim> claims(List<Proposition> facts) {
-        return facts.stream().map(fact -> new Claim(fact.getId(), fact.getText(), fact.getPinned(),
-                fact.getGrounding())).toList();
+        return facts.stream().map(Workflow::claim).toList();
+    }
+
+    private static Claim claim(Proposition fact) {
+        return new Claim(fact.getId(), fact.getText(), fact.getPinned(), fact.getGrounding());
     }
 
     private static List<ClaimRevision> revisions(List<Proposition> facts) {
@@ -292,8 +301,9 @@ final class Workflow {
     record Customer(String name) {}
 
     record Turn(String reply) {}
-    record State(Instant baseline, Instant observedAt, List<Claim> claims, List<Review> reviews) {}
+    record State(Instant baseline, Instant observedAt, List<Claim> claims, List<Review> reviews, List<Approval> approvals) {}
     record Claim(String id, String text, boolean pinned, List<String> sources) {}
-    record Review(String id, String text, String sourceId, String reason, boolean approvable) {}
+    record Review(String id, String text, String sourceId, String reason, boolean approvable, Claim target) {}
+    record Approval(String id, Instant prior, Instant approvedAt, String text) {}
     record History(Instant asOf, List<Claim> claims) {}
 }

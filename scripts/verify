@@ -5,12 +5,6 @@ cd -- "$(dirname -- "$0")/.."
 export SPRING_PROFILES_ACTIVE=offline
 ./mvnw -U -B verify
 
-(
-  cd web
-  bun install --frozen-lockfile
-  bun run build
-)
-
 run_dir=$(mktemp -d "${TMPDIR:-/tmp}/dice-governed-chat.XXXXXX")
 java -jar target/dice-governed-chat.jar --server.port=0 \
   --governed.store.path="$run_dir/chat.sqlite" >"$run_dir/server.log" 2>&1 &
@@ -35,5 +29,5 @@ fi
 printf 'Browser test server log: %s/server.log\n' "$run_dir"
 (
   cd web
-  DICE_API_URL="http://127.0.0.1:$port" DICE_LIVE_E2E=1 bun run test
+  DICE_APP_URL="http://127.0.0.1:$port" DICE_LIVE_E2E=1 bun run test
 )

@@ -53,6 +53,7 @@ class StorageConfiguration {
         return SchemaCatalog.of(List.of(
                 new UniquenessConstraintSpec("GovernedChatWorkspace", "id"),
                 new UniquenessConstraintSpec("GovernedChatReview", List.of("workspace", "id")),
+                new UniquenessConstraintSpec("GovernedChatApproval", List.of("workspace", "id")),
                 new UniquenessConstraintSpec("GovernedChatSource", List.of("workspace", "id"))))
                 .forDatabase(DATABASE);
     }

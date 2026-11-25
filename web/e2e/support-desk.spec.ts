@@ -83,6 +83,7 @@ async function verifyReviewFlow(page: Page, capture?: (state: string) => Promise
   await source.getByRole('button', { name: 'Close' }).click()
 
   await page.getByRole('button', { name: 'Reviewer', exact: true }).click()
+  await capture?.('pending-review')
   await pending.getByRole('button', { name: 'Approve' }).press('Enter')
   await expect(current.getByText(proposed, { exact: true })).toBeVisible()
   await expect(pending.getByText('No pending changes.')).toBeVisible()
@@ -99,6 +100,7 @@ async function verifyReviewFlow(page: Page, capture?: (state: string) => Promise
   await page.getByRole('button', { name: 'At baseline' }).click()
   await expect(history.getByText('No beliefs at this time.')).toBeVisible()
 
+  await page.getByText('Choose a date and time', { exact: true }).click()
   await page.getByLabel('As of date and time').fill('2020-01-01T12:00')
   await page.getByRole('button', { name: 'Read earlier beliefs' }).click()
   await expect(page.getByRole('alert')).toHaveText('No complete baseline covers that time.')
@@ -224,8 +226,9 @@ test('runs the review progression against the real application', async ({ page }
   test.skip(process.env.DICE_LIVE_E2E !== '1', 'Requires a fresh running DICE application')
   await verifyReviewFlow(page, async (state) => {
     const desktop = page.viewportSize()
-    await page.screenshot({ path: testInfo.outputPath(`governed-${state}-desktop.png`), fullPage: true })
-    if (desktop) {
+    await page.evaluate(async () => { window.scrollTo(0, 0); await document.fonts.ready })
+    await page.screenshot({ path: testInfo.outputPath(`governed-${state}-desktop.png`), fullPage: true, animations: 'disabled' })
+    if (desktop && state === 'reviewed-history') {
       await page.setViewportSize({ width: 390, height: 844 })
       await page.screenshot({ path: testInfo.outputPath(`governed-${state}-mobile.png`), fullPage: true })
       await page.setViewportSize(desktop)
@@ -239,13 +242,24 @@ test('runs the review progression against the real application', async ({ page }
   const send = page.getByRole('button', { name: 'Record as evidence' })
   await message.fill('How long does a customer have to request a refund?')
   await page.getByRole('button', { name: 'Ask', exact: true }).click()
-  await expect(page.getByRole('log', { name: 'Conversation messages' })).toContainText(proposed)
+  const chat = page.getByRole('log', { name: 'Conversation messages' })
+  await expect(chat).toContainText(proposed)
+  await chat.getByRole('button', { name: 'Evidence 1' }).click()
+  const citedSource = page.getByRole('dialog', { name: 'Source message' })
+  await expect(citedSource.getByText(proposed, { exact: true })).toBeVisible()
+  await citedSource.getByRole('button', { name: 'Close' }).click()
   await expect(pending.getByText('No pending changes.')).toBeVisible()
   await page.evaluate(async () => {
     window.scrollTo(0, 0)
     await document.fonts.ready
   })
   await page.screenshot({ path: testInfo.outputPath('governed-ask-desktop.png'), fullPage: true, animations: 'disabled' })
+
+  await page.reload()
+  await page.getByRole('button', { name: 'Before approval' }).click()
+  const comparison = page.getByLabel('Approval comparison')
+  await expect(comparison.getByText(initial, { exact: true })).toBeVisible()
+  await expect(comparison.getByText(proposed, { exact: true })).toBeVisible()
 
   await message.fill(email)
   await send.click()

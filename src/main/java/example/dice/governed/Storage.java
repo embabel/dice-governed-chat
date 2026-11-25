@@ -117,6 +117,22 @@ final class Storage {
         });
     }
 
+    void saveApproval(String workspace, String id, Instant before, Instant after, String text) {
+        manager.execute(query("""
+                CREATE (:GovernedChatApproval {workspace: $workspace, id: $id, prior: $prior,
+                        approvedAt: $approvedAt, seconds: $seconds, nanos: $nanos, text: $text})
+                """, Map.of("workspace", workspace, "id", id, "prior", before.toString(),
+                "approvedAt", after.toString(), "seconds", after.getEpochSecond(), "nanos", after.getNano(), "text", text)));
+    }
+
+    List<ApprovalRow> approvals(String workspace) {
+        return manager.query(query("""
+                MATCH (a:GovernedChatApproval {workspace: $workspace})
+                RETURN {id: a.id, prior: a.prior, approvedAt: a.approvedAt, text: a.text}
+                ORDER BY a.seconds DESC, a.nanos DESC, a.id LIMIT 8
+                """, Map.of("workspace", workspace)).transform(ApprovalRow.class));
+    }
+
     void saveSource(String workspace, String sourceId, String text) {
         write(workspace, () -> {
             var existing = source(workspace, sourceId);
@@ -165,6 +181,8 @@ final class Storage {
 
     record Pending(String id, Proposition fact, String reason) {
     }
+
+    record ApprovalRow(String id, String prior, String approvedAt, String text) {}
 
     private record ReviewRow(String id, String fact, String reason) {
     }

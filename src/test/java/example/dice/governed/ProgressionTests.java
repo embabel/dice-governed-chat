@@ -55,6 +55,7 @@ class ProgressionTests {
             assertThat(claims(disputed, true)).anyMatch(text -> text.contains("30 days"));
             assertThat(disputed.path("reviews").size()).isOne();
             reviewId = disputed.path("reviews").get(0).path("id").asString();
+            assertThat(disputed.path("reviews").get(0).path("target").path("text").asString()).contains("30 days");
             beforeApproval = disputed.path("observedAt").asString();
             assertThat(app.json("GET", "acme/sources/dispute-1", DESK, null, 200).path("text").asString())
                     .isEqualTo(DISPUTE);
@@ -68,6 +69,7 @@ class ProgressionTests {
             assertThat(resumed.path("reviews").get(0).path("id").asString()).isEqualTo(reviewId);
             JsonNode approved = app.json("POST", "acme/reviews/" + reviewId + "/approve", REVIEWER, null, 200);
             assertThat(approved.path("reviews").size()).isZero();
+            assertThat(approved.path("approvals").get(0).path("id").asString()).isEqualTo(reviewId);
             assertThat(claims(approved, true)).anyMatch(text -> text.contains("60 days"))
                     .noneMatch(text -> text.contains("30 days"));
             assertThat(app.json("GET", "acme/sources/dispute-1", REVIEWER, null, 200).path("text").asString())
@@ -78,6 +80,7 @@ class ProgressionTests {
             assertThat(claims(prior, true)).anyMatch(text -> text.contains("30 days"))
                     .noneMatch(text -> text.contains("60 days"));
             JsonNode beta = app.json("GET", "beta/state", BETA, null, 200);
+            assertThat(beta.path("approvals").size()).isZero();
             assertThat(claims(beta, true)).anyMatch(text -> text.contains("30 days"))
                     .noneMatch(text -> text.contains("60 days"));
             app.json("GET", "acme/history?asOf=2000-01-01T00:00:00Z", REVIEWER, null, 422);

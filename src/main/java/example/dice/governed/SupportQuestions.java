@@ -18,9 +18,9 @@ final class SupportQuestions {
         this.agent = agent;
     }
 
-    String answer(Workflow.State snapshot, List<AgUi.Message> conversation) {
+    Answer answer(Workflow.State snapshot, List<AgUi.Message> conversation) {
         if (snapshot.claims().isEmpty()) {
-            return "I don’t have any support policy in this workspace yet. Would you like to record a source to start?";
+            return new Answer("I don’t have any support policy in this workspace yet. Would you like to record a source to start?", List.of());
         }
         var live = agent.getIfAvailable();
         if (live != null) {
@@ -36,7 +36,8 @@ final class SupportQuestions {
                 if (answer.text() == null || answer.text().isBlank()) {
                     throw new IllegalStateException("The answer did not contain text.");
                 }
-                return answer.text();
+                var cited = snapshot.claims().stream().filter(claim -> answer.claimIds().contains(claim.id())).toList();
+                return new Answer(answer.text(), cited);
             } catch (RuntimeException error) {
                 throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "The support assistant could not complete that request. Try again.");
             }
@@ -44,10 +45,10 @@ final class SupportQuestions {
         return guided(snapshot, conversation);
     }
 
-    private static String guided(Workflow.State snapshot, List<AgUi.Message> conversation) {
+    private static Answer guided(Workflow.State snapshot, List<AgUi.Message> conversation) {
         var question = conversation.getLast().content().toLowerCase(Locale.ROOT).strip();
         if (question.matches(".*\\b(what|which)\\b.*\\b(knows|on file|in memory|have recorded)\\b.*")) {
-            return snapshot.claims().stream().map(Workflow.Claim::text).limit(5).collect(Collectors.joining("\n"));
+            return quote(snapshot.claims().stream().limit(5).toList());
         }
         var topic = topic(question);
         if (topic.isEmpty() && question.matches("(why|how so|what about that|what does that mean|which source)[?.!]*")) {
@@ -61,15 +62,20 @@ final class SupportQuestions {
         var claims = snapshot.claims().stream()
                 .filter(claim -> !selectedTopic.isEmpty() && topic(claim.text().toLowerCase(Locale.ROOT)).equals(selectedTopic))
                 .toList();
-        return claims.isEmpty() ? redirect(snapshot)
-                : claims.stream().map(Workflow.Claim::text).collect(Collectors.joining("\n"));
+        return claims.isEmpty() ? redirect(snapshot) : quote(claims);
     }
 
-    private static String redirect(Workflow.State snapshot) {
+    private static Answer quote(List<Workflow.Claim> claims) {
+        return new Answer(claims.stream().map(Workflow.Claim::text).collect(Collectors.joining("\n")), claims);
+    }
+
+    private static Answer redirect(Workflow.State snapshot) {
         var hasPolicy = snapshot.claims().stream().anyMatch(Workflow.Claim::pinned);
         var direction = hasPolicy ? "what refund policy is in effect" : "what this workspace currently knows";
-        return "I can’t answer that from this support record. Would you like to know " + direction + "?";
+        return new Answer("I can’t answer that from this support record. Would you like to know " + direction + "?", List.of());
     }
+
+    record Answer(String text, List<Workflow.Claim> citations) {}
 
     private static String topic(String question) {
         if (question.matches(".*\\b(refund\\w*|return\\w*|policy|refund window)\\b.*")) return "refund";

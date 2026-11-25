@@ -37,6 +37,11 @@ class SupportQuestionsTest {
                         .andExpect(status().isOk()).andReturn().getResponse().getContentAsString(java.nio.charset.StandardCharsets.UTF_8);
                 assertThat(answer).contains(question.contains("refund")
                         ? "approve refunds within 30 days" : "Would you like to know what refund policy is in effect?");
+                if (question.contains("refund")) {
+                    assertThat(answer).contains("governed.citations", "initial-refund-policy");
+                } else {
+                    assertThat(answer).doesNotContain("governed.citations");
+                }
             }
             var after = workflow.state("acme");
             assertThat(after.claims()).isEqualTo(before.claims());

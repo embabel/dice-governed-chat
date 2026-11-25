@@ -11,6 +11,7 @@ export interface Review {
   sourceId: string
   reason: string
   approvable?: boolean
+  target?: Claim | null
 }
 
 export interface Workspace {
@@ -18,6 +19,14 @@ export interface Workspace {
   observedAt: string
   claims: Claim[]
   reviews: Review[]
+  approvals?: Approval[]
+}
+
+export interface Approval {
+  id: string
+  prior: string
+  approvedAt: string
+  text: string
 }
 
 export interface History {

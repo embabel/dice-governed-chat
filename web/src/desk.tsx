@@ -1,7 +1,7 @@
 import { useEffect, useReducer, useRef, useState, type FormEvent } from 'react'
 import { Chat } from './chat'
 import {
-  type Claim, formatTime, type History, keepLatestWorkspace, request, type Session, type Source, type Workspace, WorkspaceError,
+  type Approval, type Claim, formatTime, type History, keepLatestWorkspace, request, type Session, type Source, type Workspace, WorkspaceError,
 } from './workspace'
 
 export function DeskWorkspace({ session }: { session: Session }) {
@@ -65,7 +65,7 @@ export function DeskWorkspace({ session }: { session: Session }) {
     <main className="workspace">
       <div className="workspace-heading">
         <h1>Support desk</h1>
-        <p>Review what the assistant remembers about refunds and follow-up.</p>
+        <p>Ask about current policy, inspect its sources, and review changes to workspace memory.</p>
       </div>
 
       <nav className="workspace-jumps" aria-label="Workspace sections">
@@ -76,7 +76,7 @@ export function DeskWorkspace({ session }: { session: Session }) {
       </nav>
 
       <div className="workspace-grid">
-        <Chat refresh={refresh} />
+        <Chat refresh={refresh} onSource={setSourceId} />
 
         <aside className="card inspection" aria-label="Workspace memory">
           {loadError && (
@@ -106,7 +106,16 @@ export function DeskWorkspace({ session }: { session: Session }) {
             {workspace?.reviews.length === 0 && <p className="empty">No pending changes.</p>}
             {workspace?.reviews.map((review) => (
               <article className="review" key={review.id}>
-                <p className="claim-text">{review.text}</p>
+                {review.target && (
+                  <div className="review-prior">
+                    <span>Current</span>
+                    <p>{review.target.text}</p>
+                  </div>
+                )}
+                <div className="review-proposal">
+                  <span>Proposed</span>
+                  <p className="claim-text">{review.text}</p>
+                </div>
                 <p className="muted">{review.reason}</p>
                 <div className="review-actions">
                   <button type="button" className="quiet" onClick={() => setSourceId(review.sourceId)}>View source</button>
@@ -124,7 +133,7 @@ export function DeskWorkspace({ session }: { session: Session }) {
             {approvalError && <p className="error panel-message" role="alert">{approvalError}</p>}
           </section>
 
-          {workspace && <BeliefHistory session={session} baseline={workspace.baseline} beforeApproval={beforeApproval} />}
+          {workspace && <BeliefHistory session={session} workspace={workspace} beforeApproval={beforeApproval} />}
         </aside>
       </div>
       {sourceId && <SourceDialog session={session} sourceId={sourceId} onClose={() => setSourceId(undefined)} />}
@@ -156,23 +165,31 @@ function ClaimList({ claims, onSource }: { claims: Claim[]; onSource?: (id: stri
   )
 }
 
-function BeliefHistory({ session, baseline, beforeApproval }: {
+function BeliefHistory({ session, workspace, beforeApproval }: {
   session: Session
-  baseline: string
+  workspace: Workspace
   beforeApproval?: string
 }) {
   const [asOf, setAsOf] = useState('')
   const [history, setHistory] = useState<History>()
+  const [comparison, setComparison] = useState<History>()
+  const [selectedApproval, setSelectedApproval] = useState<string>()
   const [error, setError] = useState('')
   const [reading, setReading] = useState(false)
+  const latest = workspace.approvals?.[0]
 
-  async function read(time: string) {
+  async function read(time: string, approval?: Approval) {
     setHistory(undefined)
+    setComparison(undefined)
+    setSelectedApproval(approval?.id)
     setError('')
     setReading(true)
-    const query = new URLSearchParams({ asOf: time })
+    const snapshot = (at: string) => request<History>(session, `/history?${new URLSearchParams({ asOf: at })}`)
     try {
-      setHistory(await request<History>(session, `/history?${query}`))
+      const prior = await snapshot(time)
+      const after = approval ? await snapshot(approval.approvedAt) : undefined
+      setHistory(prior)
+      setComparison(after)
     } catch (failure) {
       setError(failure instanceof WorkspaceError && failure.status === 422
         ? 'No complete baseline covers that time.'
@@ -197,24 +214,60 @@ function BeliefHistory({ session, baseline, beforeApproval }: {
       <div className="card-header"><h2 id="history-heading">Earlier beliefs</h2></div>
       <div className="history-controls">
         <div className="coverage">
-          <span className="muted">Coverage starts <time dateTime={baseline}>{formatTime(baseline)}</time></span>
-          <button className="quiet" type="button" disabled={reading} onClick={() => void read(baseline)}>At baseline</button>
+          <span className="muted">Coverage starts <time dateTime={workspace.baseline}>{formatTime(workspace.baseline)}</time></span>
+          <button className="quiet" type="button" disabled={reading} onClick={() => void read(workspace.baseline)}>At baseline</button>
         </div>
-        {beforeApproval && (
+        {latest ? (
+          <ol className="approval-list" aria-label="Recent approvals">
+            {workspace.approvals?.map((approval, index) => (
+              <li key={approval.id}>
+                <button type="button" className="approval-point" aria-pressed={selectedApproval === approval.id}
+                  disabled={reading} onClick={() => void read(approval.prior, approval)}>
+                  <span>{index === 0 ? 'Before approval' : 'Compare approval'}</span>
+                  <strong>{approval.text}</strong>
+                  <time dateTime={approval.approvedAt}>{formatTime(approval.approvedAt)}</time>
+                </button>
+              </li>
+            ))}
+          </ol>
+        ) : beforeApproval && (
           <button className="quiet history-shortcut" type="button" disabled={reading} onClick={() => void read(beforeApproval)}>
             Before approval
           </button>
         )}
-        <form className="history-form" onSubmit={submit}>
-          <label htmlFor="as-of">As of date and time</label>
-          <input id="as-of" type="datetime-local" required value={asOf} onChange={(event) => setAsOf(event.target.value)} />
-          <button className="secondary" type="submit" disabled={reading || !asOf}>Read earlier beliefs</button>
-        </form>
+        <details className="history-custom">
+          <summary>Choose a date and time</summary>
+          <form className="history-form" onSubmit={submit}>
+            <label htmlFor="as-of">As of date and time</label>
+            <input id="as-of" type="datetime-local" required value={asOf} onChange={(event) => setAsOf(event.target.value)} />
+            <button className="secondary" type="submit" disabled={reading || !asOf}>Read earlier beliefs</button>
+          </form>
+        </details>
         {error && <p className="error" role="alert">{error}</p>}
-        {history && <p className="muted history-time">Beliefs as of <time dateTime={history.asOf}>{formatTime(history.asOf)}</time></p>}
+        {reading && <p className="muted history-time" role="status">Reading audit history…</p>}
+        {history && !comparison && <p className="muted history-time">Beliefs as of <time dateTime={history.asOf}>{formatTime(history.asOf)}</time></p>}
       </div>
-      {history && <ClaimList claims={history.claims} />}
+      {history && (comparison
+        ? <BeliefComparison prior={history} after={comparison} />
+        : <ClaimList claims={history.claims} />)}
     </section>
+  )
+}
+
+function BeliefComparison({ prior, after }: { prior: History; after: History }) {
+  const unchanged = (claim: Claim, other: Claim[]) => other.some((value) =>
+    value.id === claim.id && value.text === claim.text && value.pinned === claim.pinned)
+  return (
+    <div className="comparison" aria-label="Approval comparison">
+      <div className="compare-earlier">
+        <h3>Before</h3>
+        <ClaimList claims={prior.claims.filter((claim) => !unchanged(claim, after.claims))} />
+      </div>
+      <div className="compare-approved">
+        <h3>After</h3>
+        <ClaimList claims={after.claims.filter((claim) => !unchanged(claim, prior.claims))} />
+      </div>
+    </div>
   )
 }
 
@@ -241,8 +294,7 @@ function SourceDialog({ session, sourceId, onClose }: { session: Session; source
         <h2 id="source-heading">Source message</h2>
         <button className="quiet" type="button" onClick={() => dialog.current?.close()}>Close</button>
       </div>
-      {source ? <blockquote>{source.text}</blockquote> : <p>{error || 'Loading source…'}</p>}
-      <p className="source-id">{sourceId}</p>
+      {source ? <blockquote>{source.text}</blockquote> : <p role={error ? 'alert' : 'status'}>{error || 'Loading source…'}</p>}
     </dialog>
   )
 }

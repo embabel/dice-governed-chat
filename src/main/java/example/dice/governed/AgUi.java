@@ -72,12 +72,14 @@ final class AgUi {
     record Message(String id, String role, String content) {
     }
 
-    String success(Run run, String reply, Object state) {
+    String success(Run run, SupportQuestions.Answer answer, Object state) {
         String messageId = UUID.randomUUID().toString();
         return event(Map.of("type", "RUN_STARTED", "threadId", run.threadId(), "runId", run.runId()))
                 + event(Map.of("type", "TEXT_MESSAGE_START", "messageId", messageId, "role", "assistant"))
-                + event(Map.of("type", "TEXT_MESSAGE_CONTENT", "messageId", messageId, "delta", reply))
+                + event(Map.of("type", "TEXT_MESSAGE_CONTENT", "messageId", messageId, "delta", answer.text()))
                 + event(Map.of("type", "TEXT_MESSAGE_END", "messageId", messageId))
+                + (answer.citations().isEmpty() ? "" : event(Map.of("type", "CUSTOM", "name", "governed.citations",
+                        "value", Map.of("messageId", messageId, "claims", answer.citations()))))
                 + event(Map.of("type", "STATE_SNAPSHOT", "snapshot", state))
                 + event(Map.of("type", "RUN_FINISHED", "threadId", run.threadId(), "runId", run.runId()));
     }

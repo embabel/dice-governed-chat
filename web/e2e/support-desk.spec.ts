@@ -71,7 +71,7 @@ async function verifyReviewFlow(page: Page, capture?: (state: string) => Promise
   await capture?.('support-desk')
 
   await page.getByRole('textbox', { name: 'Message support desk' }).fill(proposed)
-  await page.getByRole('button', { name: 'Send message' }).click()
+  await page.getByRole('button', { name: 'Record as evidence' }).click()
   await expect(pending.getByText(proposed, { exact: true })).toBeVisible()
   await expect(current.getByText(initial, { exact: true })).toBeVisible()
   await expect(pending.getByRole('button', { name: 'Approve' })).toHaveCount(0)
@@ -109,6 +109,38 @@ test('shows the currently approved refund policy to the support desk', async ({ 
   await page.goto('/')
   await expect(page.getByRole('heading', { name: 'Support desk' })).toBeVisible()
   await expect(page.getByText(initial, { exact: true })).toBeVisible()
+})
+
+test('asks a free-form question and redirects an unrelated one without recording evidence', async ({ page }) => {
+  const state = { baseline, observedAt, claims: [initialClaim], reviews: [] }
+  const reply = 'I can’t answer that from this support record. Would you like to know what refund policy is in effect?'
+  await page.route(`${api}/state`, (route) => route.fulfill({ json: state }))
+  await page.route(`${api}/chat`, (route) => {
+    const { threadId, runId, messages, forwardedProps } = route.request().postDataJSON()
+    expect(forwardedProps.intent).toBe('ask')
+    const delta = messages.at(-1).content.includes('refund') ? initial : reply
+    const messageId = runId + '-answer'
+    const events = [
+      { type: 'RUN_STARTED', threadId, runId },
+      { type: 'TEXT_MESSAGE_START', messageId, role: 'assistant' },
+      { type: 'TEXT_MESSAGE_CONTENT', messageId, delta },
+      { type: 'TEXT_MESSAGE_END', messageId },
+      { type: 'STATE_SNAPSHOT', snapshot: state },
+      { type: 'RUN_FINISHED', threadId, runId },
+    ]
+    return route.fulfill({ contentType: 'text/event-stream',
+      body: events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join('') })
+  })
+  await page.goto('/')
+  const message = page.getByRole('textbox', { name: 'Message support desk' })
+  const chat = page.getByRole('log', { name: 'Conversation messages' })
+  await message.fill('How long does a customer have to get a refund?')
+  await page.getByRole('button', { name: 'Ask', exact: true }).click()
+  await expect(chat.getByText(initial, { exact: true })).toBeVisible()
+  await message.fill('Who discovered Neptune?')
+  await page.getByRole('button', { name: 'Ask', exact: true }).click()
+  await expect(chat.getByText(reply, { exact: true })).toBeVisible()
+  await expect(page.getByRole('region', { name: 'Pending review' }).getByText('No pending changes.')).toBeVisible()
 })
 
 test('reviews a proposed policy change and keeps earlier beliefs inspectable', async ({ page }) => {
@@ -178,7 +210,7 @@ test('a delayed approval response keeps the newer beliefs from a chat refresh', 
   await approving
 
   await page.getByRole('textbox', { name: 'Message support desk' }).fill(email)
-  await page.getByRole('button', { name: 'Send message' }).click()
+  await page.getByRole('button', { name: 'Record as evidence' }).click()
   const current = page.getByRole('region', { name: 'Current beliefs' })
   await expect(current.getByText(email, { exact: true })).toBeVisible()
   await expect(otherApproval).toBeDisabled()
@@ -204,7 +236,7 @@ test('runs the review progression against the real application', async ({ page }
   const current = page.getByRole('region', { name: 'Current beliefs' })
   const pending = page.getByRole('region', { name: 'Pending review' })
   const message = page.getByRole('textbox', { name: 'Message support desk' })
-  const send = page.getByRole('button', { name: 'Send message' })
+  const send = page.getByRole('button', { name: 'Record as evidence' })
   await message.fill(email)
   await send.click()
   await expect(current.getByText(email, { exact: true })).toBeVisible()

@@ -2,7 +2,7 @@
 
 A support desk uses DICE to remember approved policy and facts from conversations. An operator can inspect the message behind a proposed change. A reviewer can approve it. The audit trail shows which policy was in force before the approval.
 
-The app runs locally with scripted model replies and a file-backed SQLite store. The same chat path can use a live model.
+Ask ordinary questions about the current workspace using **Ask**. Answers use the scoped support memory and suggest a relevant next question when the record cannot answer. Use **Record as evidence** when you want to submit a source for extraction and possible review.
 
 ## What you’ll see
 
@@ -41,13 +41,13 @@ Open [the support desk](http://127.0.0.1:5173). The server listens on loopback. 
 
 ## Follow a policy change
 
-1. As **Support desk**, send “Support leads can approve refunds within 60 days.” The claim goes to review. The pinned 30-day policy remains current.
+1. As **Support desk**, enter “Support leads can approve refunds within 60 days.” and select **Record as evidence**. The claim goes to review. The pinned 30-day policy remains current.
 2. Open the proposed change's source to read the original message.
 3. Switch to **Reviewer** and approve the change. The 60-day policy becomes current. Its source still points to the original support message.
 4. Select **Before approval** in the history view. It shows the earlier policy. A time before the baseline returns unavailable.
 5. Restart the server with the same database and reopen the support desk. The policy and history remain available.
 
-Try “Email is our preferred follow-up channel.” followed by “Phone is our preferred follow-up channel.” The second claim gives Embabel Decision an existing fact to compare. Protected policy follows the approval workflow.
+Record “Email is our preferred follow-up channel.” followed by “Phone is our preferred follow-up channel.” The second claim gives Embabel Decision an existing fact to compare. Protected policy follows the approval workflow.
 
 ## What DICE does
 
@@ -98,7 +98,7 @@ For ordinary claims the app asks `DecisionService` through a model role to class
 
 ## Live models
 
-Set `OPENAI_API_KEY` in your environment and run the server with the live profile.
+Set `OPENAI_API_KEY` and start the server normally to use live OpenAI chat. The app starts in guided mode if the key is absent. To choose guided mode with a key present, set `SPRING_PROFILES_ACTIVE=offline`.
 
 ```sh
 ./mvnw -B spring-boot:run -Dspring-boot.run.profiles=live

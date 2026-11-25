@@ -18,7 +18,32 @@ final class AgUi {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
-    record Run(String threadId, String runId, List<Message> messages) {
+    record Run(String threadId, String runId, List<Message> messages, ForwardedProps forwardedProps) {
+
+        Run(String threadId, String runId, List<Message> messages) {
+            this(threadId, runId, messages, null);
+        }
+
+        boolean isQuestion() {
+            var intent = forwardedProps == null ? null : forwardedProps.intent();
+            if (intent == null || "record".equals(intent)) {
+                return false;
+            }
+            if ("ask".equals(intent)) {
+                return true;
+            }
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Choose ask or record for the chat intent.");
+        }
+
+        List<Message> conversation() {
+            var turns = messages.subList(Math.max(0, messages.size() - 13), messages.size());
+            if (turns.stream().anyMatch(turn -> turn == null
+                    || !("user".equals(turn.role()) || "assistant".equals(turn.role()))
+                    || blank(turn.content()) || turn.content().length() > 8_000)) {
+                throw badRun();
+            }
+            return List.copyOf(turns);
+        }
         Message userMessage() {
             if (blank(threadId) || blank(runId) || messages == null || messages.isEmpty()) {
                 throw badRun();
@@ -39,6 +64,9 @@ final class AgUi {
             return new ResponseStatusException(HttpStatus.BAD_REQUEST, "A run needs one final user message");
         }
     }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    record ForwardedProps(String intent) { }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     record Message(String id, String role, String content) {

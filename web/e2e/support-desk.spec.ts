@@ -113,6 +113,24 @@ test('shows the currently approved refund policy to the support desk', async ({ 
   await expect(page.getByText(initial, { exact: true })).toBeVisible()
 })
 
+test('keeps the whole chat composer and suggested questions inside the mobile card', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await mockWorkspace(page)
+  await page.goto('/')
+  const card = await page.locator('.chat').boundingBox()
+  expect(card).not.toBeNull()
+  for (const control of [
+    page.getByRole('textbox', { name: 'Message support desk' }),
+    page.getByRole('button', { name: 'Record as evidence' }),
+    page.getByRole('button', { name: /how long do customers have to request a refund/i }),
+  ]) {
+    const box = await control.boundingBox()
+    expect(box).not.toBeNull()
+    expect(box!.x + box!.width).toBeLessThan(card!.x + card!.width)
+  }
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390)
+})
+
 test('asks a free-form question and redirects an unrelated one without recording evidence', async ({ page }) => {
   const state = { baseline, observedAt, claims: [initialClaim], reviews: [] }
   const reply = 'I can’t answer that from this support record. Would you like to know what refund policy is in effect?'
@@ -227,7 +245,11 @@ test('runs the review progression against the real application', async ({ page }
   await verifyReviewFlow(page, async (state) => {
     const desktop = page.viewportSize()
     await page.evaluate(async () => { window.scrollTo(0, 0); await document.fonts.ready })
-    await page.screenshot({ path: testInfo.outputPath(`governed-${state}-desktop.png`), fullPage: true, animations: 'disabled' })
+    await page.screenshot({
+      path: testInfo.outputPath(`governed-${state}-desktop.png`),
+      fullPage: state !== 'source-evidence',
+      animations: 'disabled',
+    })
     if (desktop && state === 'reviewed-history') {
       await page.setViewportSize({ width: 390, height: 844 })
       await page.screenshot({ path: testInfo.outputPath(`governed-${state}-mobile.png`), fullPage: true })

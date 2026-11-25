@@ -141,6 +141,7 @@ h2 { font-size: 1.045rem; font-weight: 700; letter-spacing: -.02em; }
 
 .chat {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto minmax(300px, 1fr) auto;
   min-height: 560px;
   overflow: hidden;
@@ -162,7 +163,7 @@ h2 { font-size: 1.045rem; font-weight: 700; letter-spacing: -.02em; }
 }
 .chat-empty { margin: auto; width: min(100%, 440px); }
 .chat-empty p { margin-bottom: 18px; font-weight: 675; font-size: 1.12rem; line-height: 1.43; text-wrap: balance; }
-.examples { display: grid; gap: 7px; }
+.examples { display: grid; grid-template-columns: minmax(0, 1fr); gap: 7px; }
 .examples button {
   display: flex;
   align-items: center;
@@ -431,7 +432,7 @@ dialog > p { margin-top: 12px; }
   .examples button, .primary, .secondary, .quiet { min-height: 44px; }
   .transcript { padding-block: 18px; }
   textarea, input { font-size: 1rem; }
-  .composer-footer { display: grid; grid-template-columns: max-content max-content; justify-content: stretch; gap: 7px; }
+  .composer-footer { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
   .composer-footer .muted { grid-column: 1 / -1; }
   .coverage { align-items: center; }
 }

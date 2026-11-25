@@ -92,6 +92,17 @@ class ProgressionTests {
                     .noneMatch(text -> text.contains("Phone"));
             assertThat(preference.path("reviews").get(0).path("text").asString()).contains("Phone");
         }
+
+        try (var app = start()) {
+            var checkpoint = app.json("GET", "acme/state", DESK, null, 200).path("approvals").get(0);
+            assertThat(checkpoint.path("id").asString()).isEqualTo(reviewId);
+            var earlier = app.json("GET", "acme/history?asOf=" + checkpoint.path("prior").asString(),
+                    DESK, null, 200);
+            var later = app.json("GET", "acme/history?asOf=" + checkpoint.path("approvedAt").asString(),
+                    DESK, null, 200);
+            assertThat(claims(earlier, true)).containsExactly("Support leads can approve refunds within 30 days.");
+            assertThat(claims(later, true)).containsExactly(DISPUTE);
+        }
     }
 
     @Test

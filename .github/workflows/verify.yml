@@ -36,32 +36,3 @@ jobs:
           name: governed-chat-screens
           path: web/test-results/**/governed-*.png
           if-no-files-found: ignore
-      - name: Export selected README captures
-        env:
-          SCREENSHOT_DIRECTORY: web/test-results
-        run: |
-          command -v cwebp >/dev/null || {
-            sudo apt-get update -qq
-            sudo apt-get install -y webp
-          }
-          python3 - "governed-ask-desktop.png" "governed-reviewed-history-mobile.png" "governed-source-evidence-desktop.png" <<'PY'
-          import base64
-          import hashlib
-          import os
-          import pathlib
-          import subprocess
-          import sys
-          import tempfile
-          path = pathlib.Path(os.environ["SCREENSHOT_DIRECTORY"])
-          for name in sys.argv[1:]:
-              image, = path.rglob(name)
-              with tempfile.TemporaryDirectory() as temp:
-                  webp = pathlib.Path(temp) / "capture.webp"
-                  subprocess.run(["cwebp", "-quiet", "-lossless", "-z", "8", str(image), "-o", str(webp)], check=True)
-                  data = webp.read_bytes()
-              raw = base64.b64encode(data).decode()
-              print(f"CAPTURE_START {name} {len(data)} {hashlib.sha256(data).hexdigest()}")
-              for n in range(0, len(raw), 2048):
-                  print(f"CAPTURE_DATA {name} {raw[n:n+2048]}")
-              print(f"CAPTURE_END {name}")
-          PY

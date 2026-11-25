@@ -2,9 +2,8 @@ import { useAgent } from '@copilotkit/react-core/v2/headless'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 
 const examples = [
-  'Support leads can approve refunds within 60 days.',
-  'Email is our preferred follow-up channel.',
-  'Phone is our preferred follow-up channel.',
+  'How long do customers have to request a refund?',
+  'How should we follow up with customers?',
 ]
 
 export function Chat({ refresh }: { refresh: () => void }) {
@@ -24,6 +23,8 @@ export function Chat({ refresh }: { refresh: () => void }) {
 
   async function send(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
+    const submitter = (event.nativeEvent as SubmitEvent).submitter
+    const intent = submitter?.getAttribute('value') === 'record' ? 'record' : 'ask'
     const content = draft.trim()
     if (!content || !isReady || busy.current) return
 
@@ -32,8 +33,9 @@ export function Chat({ refresh }: { refresh: () => void }) {
     setError('')
     agent.addMessage({ id: crypto.randomUUID(), role: 'user', content })
     try {
-      await agent.runAgent()
+      await agent.runAgent({ forwardedProps: { intent } })
     } catch {
+      setDraft(content)
       setError('The message could not be processed. Check the workspace before trying again.')
     } finally {
       busy.current = false
@@ -50,7 +52,7 @@ export function Chat({ refresh }: { refresh: () => void }) {
       <div className="transcript" ref={transcript} role="log" aria-label="Conversation messages">
         {messages.length === 0 && (
           <div className="chat-empty">
-            <p>Report a change to Acme’s refund policy or follow-up preference.</p>
+            <p>Ask about Acme’s support policy or add a source for review.</p>
             <div className="examples" aria-label="Example messages">
               {examples.map((example) => <button type="button" key={example} onClick={() => setDraft(example)}>{example}</button>)}
             </div>
@@ -67,9 +69,12 @@ export function Chat({ refresh }: { refresh: () => void }) {
         <label htmlFor="message">Message support desk</label>
         <textarea id="message" rows={3} maxLength={4096} value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="Write a message…" />
         <div className="composer-footer">
-          <span className="muted">Messages become sources for suggested changes.</span>
-          <button className="primary" type="submit" disabled={!draft.trim() || !isReady || agent.isRunning}>
-            {agent.isRunning ? 'Sending…' : 'Send message'}
+          <span className="muted">Ask uses approved memory. Record as evidence starts a review when needed.</span>
+          <button className="primary" type="submit" value="ask" disabled={!draft.trim() || !isReady || agent.isRunning}>
+            Ask
+          </button>
+          <button type="submit" value="record" disabled={!draft.trim() || !isReady || agent.isRunning}>
+            Record as evidence
           </button>
         </div>
         {error && <p className="error" role="alert">{error}</p>}

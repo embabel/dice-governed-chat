@@ -26,12 +26,14 @@ import java.util.Map;
 final class ChatHttp {
     private final Workflow workflow;
     private final Storage storage;
+    private final SupportQuestions questions;
     private final DemoAccess access;
     private final AgUi agUi;
 
-    ChatHttp(Workflow workflow, Storage storage, DemoAccess access, JsonMapper json) {
+    ChatHttp(Workflow workflow, Storage storage, DemoAccess access, JsonMapper json, SupportQuestions questions) {
         this.workflow = workflow;
         this.storage = storage;
+        this.questions = questions;
         this.access = access;
         this.agUi = new AgUi(json);
     }
@@ -42,11 +44,15 @@ final class ChatHttp {
                                 @RequestBody AgUi.Run run) {
         access.require(workspace, authorization, false);
         var message = run.userMessage();
-        var turn = workflow.tell(workspace, message.id(), message.content());
+        var reply = run.isQuestion() ? null : workflow.tell(workspace, message.id(), message.content()).reply();
+        var snapshot = workflow.state(workspace);
+        if (reply == null) {
+            reply = questions.answer(snapshot, run.conversation());
+        }
         return ResponseEntity.ok()
                 .contentType(MediaType.TEXT_EVENT_STREAM)
                 .header(HttpHeaders.CACHE_CONTROL, "no-store")
-                .body(agUi.success(run, turn.reply(), workflow.state(workspace)));
+                .body(agUi.success(run, reply, snapshot));
     }
 
     @GetMapping("/state")

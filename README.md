@@ -40,7 +40,7 @@ For frontend development, run the server and then start Vite from `web` with `bu
 
 Ask “How much time does a customer have to request a refund?” Then ask “What does that mean for the support lead?” Chat answers from active claims in the authorized workspace. Pending proposals stay in review until a reviewer approves them. If the workspace cannot answer, the assistant offers a question it can answer from the current record.
 
-The browser sends AG-UI runs to `POST /api/workspaces/{workspace}/chat`. It sets `forwardedProps.intent` to `ask` for questions and `record` for evidence. The ask path reads a scoped snapshot and keeps the conversation as context. A `governed.citations` AG-UI event pairs the assistant message with validated claims and their source IDs. Open an **Evidence** button to inspect the original message. It sends no question text through extraction or policy revision. Clients using the original endpoint without an intent continue to submit evidence.
+The browser sends AG-UI runs to `POST /api/workspaces/{workspace}/chat`. It sets `forwardedProps.intent` to `ask` for questions and `record` for evidence. The ask path reads a scoped snapshot and keeps the conversation as context. Question text stays out of extraction and policy revision. A `governed.citations` AG-UI event pairs the assistant message with validated claims and their source IDs. Open an **Evidence** button to inspect the original message. Clients using the original endpoint without an intent continue to submit evidence.
 
 ## Follow a policy change
 

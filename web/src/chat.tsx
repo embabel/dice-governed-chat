@@ -101,7 +101,7 @@ export function Chat({ refresh, onSource }: { refresh: () => void; onSource: (id
           <button className="primary" type="submit" value="ask" disabled={!draft.trim() || !isReady || agent.isRunning}>
             Ask
           </button>
-          <button type="submit" value="record" disabled={!draft.trim() || !isReady || agent.isRunning}>
+          <button className="secondary" type="submit" value="record" disabled={!draft.trim() || !isReady || agent.isRunning}>
             Record as evidence
           </button>
         </div>

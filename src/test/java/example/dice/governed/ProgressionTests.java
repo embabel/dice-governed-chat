@@ -209,7 +209,7 @@ class ProgressionTests {
 
         @Override
         public void close() {
-            context.close();
+            StorageTests.closeDatabase(context);
         }
     }
 }
